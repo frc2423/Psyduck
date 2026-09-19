@@ -10,4 +10,11 @@ export default defineConfig({
       },
     }),
   ],
+  server: {
+    proxy: {
+      // The Python bridge (`uv run robot-llm-server`) listens on :8000.
+      '/ws': { target: 'ws://127.0.0.1:8000', ws: true },
+      '/api': { target: 'http://127.0.0.1:8000' },
+    },
+  },
 })

@@ -62,6 +62,9 @@ src/robot_llm/
   tools.py       manifest -> LangChain StructuredTools (+ get_robot_state, cancel_all_commands, wait_seconds)
   agent.py       create_agent() wiring, system prompt, console rendering
   cli.py         interactive REPL / one-shot runner  (entry point: `robot-llm`)
+  server.py      FastAPI WebSocket bridge for the web frontend  (entry point: `robot-llm-server`)
+robot-llm-frontend/
+  src/           Vite + React + MUI + zustand web UI: chat, running command, robot state, command list
 ExampleRobotProject/src/main/java/frc/robot/
   llm/LlmCommands.java         registry + NT protocol; call periodic() from robotPeriodic()
   llm/LlmCommandBuilder.java   fluent registration API
@@ -127,6 +130,26 @@ cp .env.example .env       # then put your OPENAI_API_KEY in .env
    uv run robot-llm --model gpt-5   # different OpenAI model (or set OPENAI_MODEL)
    ```
    REPL commands: `/commands`, `/state`, `/cancel`, `/quit`.
+
+### Web frontend
+
+The React app talks to a small FastAPI bridge that wraps the same `RobotClient` and agent over a
+single WebSocket (`/ws`). Start the robot (or simulator) as above, then:
+
+```sh
+uv run robot-llm-server            # bridge on http://127.0.0.1:8000 (same --server/--team/--model flags)
+cd robot-llm-frontend && npm install && npm run dev
+```
+
+Open the URL Vite prints (it proxies `/ws` and `/api` to the bridge). The page shows the chat with
+inline tool calls/results, the currently running command with elapsed time and a cancel button,
+live telemetry from `/LLM/state`, and every command from the manifest with its parameters and
+status. **Stop all** in the toolbar sends `cancelAll`.
+
+Bridge protocol (JSON over the WebSocket): server sends `hello`/`manifest` (command specs),
+`snapshot` (robot connection, telemetry, per-command status — only when something changes),
+`turn` (`start`/`end`), `message` (`assistant`, `tool_call`, `tool_result`) and `error`; the client
+sends `chat {text}`, `cancel_all` and `cancel {name}`. See `src/robot_llm/server.py`.
 
 ## Tests
 

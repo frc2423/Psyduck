@@ -83,6 +83,16 @@ class Manifest:
 
 
 @dataclass(frozen=True)
+class CommandStatus:
+    """Live status of one command, read from ``/LLM/commands/<name>``."""
+
+    name: str
+    status: str  # idle | running | finished | interrupted | rejected | unknown
+    last_result: str
+    completed_count: int
+
+
+@dataclass(frozen=True)
 class CommandResult:
     name: str
     status: str
@@ -242,6 +252,21 @@ class RobotClient:
 
     def get_status(self, name: str) -> str:
         return self._commands_table.getSubTable(name).getEntry("status").getString("unknown")
+
+    def get_command_status(self, name: str) -> CommandStatus:
+        table = self._commands_table.getSubTable(name)
+        return CommandStatus(
+            name=name,
+            status=table.getEntry("status").getString("unknown"),
+            last_result=table.getEntry("lastResult").getString(""),
+            completed_count=table.getEntry("completedCount").getInteger(0),
+        )
+
+    def get_all_statuses(self) -> list[CommandStatus]:
+        """Status of every command in the manifest (empty if the manifest is not known yet)."""
+        if self._manifest is None:
+            return []
+        return [self.get_command_status(spec.name) for spec in self._manifest.commands]
 
     # ------------------------------------------------------------------ state
 
