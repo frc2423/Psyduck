@@ -8,6 +8,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import edu.wpi.first.math.geometry.Translation2d;
 import edu.wpi.first.networktables.NetworkTable;
 import edu.wpi.first.networktables.NetworkTableEntry;
 import edu.wpi.first.networktables.NetworkTableInstance;
@@ -16,8 +17,11 @@ import edu.wpi.first.wpilibj.DriverStation;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.CommandScheduler;
 import frc.robot.llm.LlmCommandBuilder.LlmCommandSpec;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -40,6 +44,9 @@ import java.util.Map;
  *   <li>{@code commands/<name>/lastResult} (string) – human-readable outcome of the last run.
  *   <li>{@code cancelAll} (boolean) – client sets true to cancel every scheduled command.
  *   <li>{@code state/<key>} – telemetry published by subsystems via {@link #publishState}.
+ *   <li>{@code state/avoidance_zones} (string) – JSON array of rectangles the robot must not
+ *       enter, maintained via {@link #addAvoidanceZone}. Each element has {@code name}, {@code
+ *       min_x}, {@code min_y}, {@code max_x} and {@code max_y} in field meters.
  * </ul>
  *
  * <p>Call {@link #periodic()} from {@code Robot.robotPeriodic()}.
@@ -47,6 +54,7 @@ import java.util.Map;
 public final class LlmCommands {
   private static final String TABLE_NAME = "LLM";
   private static final int MANIFEST_VERSION = 1;
+  private static final String AVOIDANCE_ZONES_KEY = "avoidance_zones";
 
   private static final LlmCommands kInstance = new LlmCommands();
 
@@ -58,6 +66,7 @@ public final class LlmCommands {
   private final ObjectMapper m_mapper = new ObjectMapper();
 
   private final Map<String, Registration> m_registrations = new LinkedHashMap<>();
+  private final List<AvoidanceZone> m_avoidanceZones = new ArrayList<>();
   private boolean m_manifestDirty = true;
 
   private LlmCommands() {
@@ -67,6 +76,7 @@ public final class LlmCommands {
     m_manifestEntry = m_table.getEntry("manifest");
     m_cancelAllEntry = m_table.getEntry("cancelAll");
     m_cancelAllEntry.setBoolean(false);
+    publishAvoidanceZones();
   }
 
   public static LlmCommands getInstance() {
@@ -89,6 +99,82 @@ public final class LlmCommands {
 
   public static void publishState(String key, String value) {
     kInstance.m_stateTable.getEntry(key).setString(value);
+  }
+
+  /**
+   * Define a rectangular area of the field the robot must not enter. The rectangle is given by its
+   * top-left and bottom-right corners in field coordinates (meters); the corners may be supplied
+   * in either order. The zone is published under {@code state/avoidance_zones} so the LLM can
+   * plan paths around it, and drivetrain commands consult {@link #getAvoidanceZones()} to refuse
+   * motions that would cross one.
+   *
+   * @param name short label for the zone, e.g. {@code "charging_station"}
+   * @param topLeftX x coordinate of the top-left corner
+   * @param topLeftY y coordinate of the top-left corner
+   * @param bottomRightX x coordinate of the bottom-right corner
+   * @param bottomRightY y coordinate of the bottom-right corner
+   * @return the normalised zone that was added
+   */
+  public static AvoidanceZone addAvoidanceZone(
+      String name, double topLeftX, double topLeftY, double bottomRightX, double bottomRightY) {
+    AvoidanceZone zone =
+        AvoidanceZone.fromCorners(
+            name,
+            new Translation2d(topLeftX, topLeftY),
+            new Translation2d(bottomRightX, bottomRightY));
+    addAvoidanceZone(zone);
+    return zone;
+  }
+
+  /** Add an already-constructed zone. See {@link #addAvoidanceZone(String, double, double, double, double)}. */
+  public static void addAvoidanceZone(AvoidanceZone zone) {
+    kInstance.m_avoidanceZones.add(zone);
+    kInstance.publishAvoidanceZones();
+    System.out.println("[LLM] added avoidance zone " + zone);
+  }
+
+  /** Remove every avoidance zone. */
+  public static void clearAvoidanceZones() {
+    kInstance.m_avoidanceZones.clear();
+    kInstance.publishAvoidanceZones();
+  }
+
+  /** The current avoidance zones, in the order they were added. Read-only. */
+  public static List<AvoidanceZone> getAvoidanceZones() {
+    return Collections.unmodifiableList(kInstance.m_avoidanceZones);
+  }
+
+  /**
+   * The first avoidance zone crossed by the straight segment from {@code start} to {@code end},
+   * or {@code null} if the path is clear.
+   */
+  public static AvoidanceZone findZoneCrossedBy(Translation2d start, Translation2d end) {
+    for (AvoidanceZone zone : kInstance.m_avoidanceZones) {
+      if (zone.intersectsSegment(start, end)) {
+        return zone;
+      }
+    }
+    return null;
+  }
+
+  private void publishAvoidanceZones() {
+    ArrayNode zones = m_mapper.createArrayNode();
+    for (AvoidanceZone zone : m_avoidanceZones) {
+      ObjectNode node = zones.addObject();
+      node.put("name", zone.name());
+      node.put("min_x", zone.minX());
+      node.put("min_y", zone.minY());
+      node.put("max_x", zone.maxX());
+      node.put("max_y", zone.maxY());
+    }
+    try {
+      // Written via the instance table (not publishState) because this also runs from the
+      // constructor, before kInstance has been assigned.
+      m_stateTable.getEntry(AVOIDANCE_ZONES_KEY).setString(m_mapper.writeValueAsString(zones));
+    } catch (JsonProcessingException e) {
+      DriverStation.reportError(
+          "[LLM] failed to serialize avoidance zones: " + e.getMessage(), false);
+    }
   }
 
   /** Poll for client requests. Call once per loop from {@code robotPeriodic}. */

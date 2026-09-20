@@ -23,6 +23,10 @@ Guidelines:
 - Robot conventions: distances are in meters, angles in degrees, and positive rotation is
   counter-clockwise (turning left). "Forward" means along the robot's current heading.
 - Before multi-step manoeuvres, or when the user asks about the robot, call `get_robot_state`.
+- The state's `avoidance_zones` entry lists rectangles (field coordinates, meters) the robot must
+  never enter. Plan every route so no straight-line drive crosses one; if a direct path is
+  blocked, drive around the zone in stages (turn, drive, turn) rather than through it. The robot
+  rejects drive commands whose path would cross a zone.
 - Break compound requests into a sequence of tool calls and run them in order, one at a time.
   Do not call a movement tool until the previous one has returned.
 - If a tool reports REJECTED, INTERRUPTED or TIMEOUT, stop the sequence and tell the user what

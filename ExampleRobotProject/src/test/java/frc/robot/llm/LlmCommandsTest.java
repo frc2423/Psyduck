@@ -5,11 +5,13 @@
 package frc.robot.llm;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import edu.wpi.first.hal.HAL;
+import edu.wpi.first.math.geometry.Translation2d;
 import edu.wpi.first.networktables.NetworkTable;
 import edu.wpi.first.networktables.NetworkTableInstance;
 import edu.wpi.first.wpilibj.simulation.DriverStationSim;
@@ -51,6 +53,7 @@ class LlmCommandsTest {
   @BeforeEach
   void setUp() {
     CommandScheduler.getInstance().cancelAll();
+    LlmCommands.clearAvoidanceZones();
     setEnabled(true);
     tick(1);
   }
@@ -160,5 +163,80 @@ class LlmCommandsTest {
     assertEquals("finished", runAndWait("score", 500));
     assertEquals(false, kState.getEntry("intake/has_game_piece").getBoolean(true));
     assertEquals(0.0, kState.getEntry("arm/angle_degrees").getDouble(99.0), 1.0);
+  }
+
+  @Test
+  void avoidanceZoneIsPublishedToState() throws Exception {
+    assertEquals("[]", kState.getEntry("avoidance_zones").getString("?"));
+
+    // Corners given top-left / bottom-right; the published zone is normalised to min/max.
+    LlmCommands.addAvoidanceZone("pit", 1.0, 3.0, 2.0, 2.0);
+    JsonNode zones = new ObjectMapper().readTree(kState.getEntry("avoidance_zones").getString(""));
+    assertEquals(1, zones.size());
+    assertEquals("pit", zones.get(0).get("name").asText());
+    assertEquals(1.0, zones.get(0).get("min_x").asDouble());
+    assertEquals(2.0, zones.get(0).get("min_y").asDouble());
+    assertEquals(2.0, zones.get(0).get("max_x").asDouble());
+    assertEquals(3.0, zones.get(0).get("max_y").asDouble());
+
+    LlmCommands.clearAvoidanceZones();
+    assertEquals("[]", kState.getEntry("avoidance_zones").getString("?"));
+  }
+
+  @Test
+  void addAvoidanceZoneCommandUpdatesState() throws Exception {
+    NetworkTable params = kCommands.getSubTable("add_avoidance_zone").getSubTable("params");
+    params.getEntry("name").setString("charging_station");
+    params.getEntry("top_left_x").setDouble(4.0);
+    params.getEntry("top_left_y").setDouble(1.0);
+    params.getEntry("bottom_right_x").setDouble(5.0);
+    params.getEntry("bottom_right_y").setDouble(0.0);
+    assertEquals("finished", runAndWait("add_avoidance_zone", 10));
+
+    JsonNode zones = new ObjectMapper().readTree(kState.getEntry("avoidance_zones").getString(""));
+    assertEquals("charging_station", zones.get(0).get("name").asText());
+    assertEquals(1, LlmCommands.getAvoidanceZones().size());
+
+    assertEquals("finished", runAndWait("clear_avoidance_zones", 10));
+    assertTrue(LlmCommands.getAvoidanceZones().isEmpty());
+  }
+
+  @Test
+  void driveDistanceRejectedWhenPathCrossesZone() {
+    // Place a zone directly ahead of wherever the robot currently is, 2-3 m along its heading.
+    double x = kState.getEntry("drivetrain/x_meters").getDouble(0.0);
+    double y = kState.getEntry("drivetrain/y_meters").getDouble(0.0);
+    double headingRad = Math.toRadians(kState.getEntry("drivetrain/heading_degrees").getDouble(0.0));
+    double cx = x + 2.5 * Math.cos(headingRad);
+    double cy = y + 2.5 * Math.sin(headingRad);
+    LlmCommands.addAvoidanceZone("wall", cx - 0.5, cy + 0.5, cx + 0.5, cy - 0.5);
+
+    kCommands.getSubTable("drive_distance").getSubTable("params").getEntry("meters").setDouble(5.0);
+    assertEquals("rejected", runAndWait("drive_distance", 5));
+    String result = kCommands.getSubTable("drive_distance").getEntry("lastResult").getString("");
+    assertTrue(result.contains("wall"), "expected zone name in result: " + result);
+    // The robot never moved.
+    assertEquals(x, kState.getEntry("drivetrain/x_meters").getDouble(99.0), 1e-6);
+
+    // A short drive that stops before the zone is still allowed.
+    kCommands.getSubTable("drive_distance").getSubTable("params").getEntry("meters").setDouble(1.0);
+    assertEquals("finished", runAndWait("drive_distance", 500));
+  }
+
+  @Test
+  void zoneGeometry() {
+    AvoidanceZone zone = new AvoidanceZone("z", 1.0, 1.0, 2.0, 2.0);
+    assertTrue(zone.contains(new Translation2d(1.5, 1.5)));
+    assertFalse(zone.contains(new Translation2d(0.5, 1.5)));
+    // Crosses the box diagonally.
+    assertTrue(zone.intersectsSegment(new Translation2d(0.0, 0.0), new Translation2d(3.0, 3.0)));
+    // Passes alongside without touching.
+    assertFalse(zone.intersectsSegment(new Translation2d(0.0, 0.5), new Translation2d(3.0, 0.5)));
+    // Axis-aligned segment through the middle (zero dy).
+    assertTrue(zone.intersectsSegment(new Translation2d(0.0, 1.5), new Translation2d(3.0, 1.5)));
+    // Stops short of the box.
+    assertFalse(zone.intersectsSegment(new Translation2d(0.0, 1.5), new Translation2d(0.9, 1.5)));
+    // Starts inside the box.
+    assertTrue(zone.intersectsSegment(new Translation2d(1.5, 1.5), new Translation2d(5.0, 1.5)));
   }
 }

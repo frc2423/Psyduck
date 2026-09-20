@@ -4,8 +4,11 @@
 
 package frc.robot;
 
+import edu.wpi.first.math.geometry.Pose2d;
+import edu.wpi.first.math.geometry.Translation2d;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.Commands;
+import frc.robot.llm.AvoidanceZone;
 import frc.robot.llm.LlmCommands;
 import frc.robot.subsystems.Arm;
 import frc.robot.subsystems.Drivetrain;
@@ -35,10 +38,15 @@ public class RobotContainer {
         .description(
             "Drive the robot in a straight line along its current heading. Positive distance"
                 + " drives forward, negative drives backward. Finishes when the distance is"
-                + " reached.")
+                + " reached. Rejected if the straight-line path would cross an avoidance zone;"
+                + " check avoidance_zones in the robot state and route around them.")
         .doubleParam("meters", "Signed distance to travel in meters.", -10.0, 10.0)
         .timeout(20.0)
-        .command(p -> m_drivetrain.driveDistance(p.getDouble("meters")));
+        .command(
+            p -> {
+              requireClearStraightPath(p.getDouble("meters"));
+              return m_drivetrain.driveDistance(p.getDouble("meters"));
+            });
 
     LlmCommands.register("turn_to_heading")
         .description(
@@ -118,6 +126,52 @@ public class RobotContainer {
         .description("Print a message to the robot console. Useful for acknowledging the operator.")
         .stringParam("message", "The text to print.")
         .command(p -> Commands.print("[robot says] " + p.getString("message")));
+
+    // --- Avoidance zones ------------------------------------------------------------------------
+    LlmCommands.register("add_avoidance_zone")
+        .description(
+            "Define a rectangular area of the field, in field coordinates (meters), that the robot"
+                + " must not enter. Drive commands whose path would cross it are rejected. The"
+                + " current zones are listed under avoidance_zones in the robot state.")
+        .stringParam("name", "Short label for the zone, e.g. charging_station.")
+        .doubleParam("top_left_x", "X coordinate of the top-left corner in meters.")
+        .doubleParam("top_left_y", "Y coordinate of the top-left corner in meters.")
+        .doubleParam("bottom_right_x", "X coordinate of the bottom-right corner in meters.")
+        .doubleParam("bottom_right_y", "Y coordinate of the bottom-right corner in meters.")
+        .command(
+            p ->
+                Commands.runOnce(
+                    () ->
+                        LlmCommands.addAvoidanceZone(
+                            p.getString("name"),
+                            p.getDouble("top_left_x"),
+                            p.getDouble("top_left_y"),
+                            p.getDouble("bottom_right_x"),
+                            p.getDouble("bottom_right_y"))));
+
+    LlmCommands.register("clear_avoidance_zones")
+        .description("Remove every avoidance zone.")
+        .command(() -> Commands.runOnce(LlmCommands::clearAvoidanceZones));
+
+    LlmCommands.addAvoidanceZone("zone1", 4.039778, 6.753221, 5.200448, 1.327091);
+  }
+
+  /**
+   * Throws if driving {@code meters} straight along the current heading would cross an avoidance
+   * zone. Called from the command factory so the request is reported as {@code rejected} rather
+   * than starting a motion that has to be aborted.
+   */
+  private void requireClearStraightPath(double meters) {
+    Pose2d pose = m_drivetrain.getPose();
+    Translation2d start = pose.getTranslation();
+    Translation2d end = start.plus(new Translation2d(meters, pose.getRotation()));
+    AvoidanceZone blocked = LlmCommands.findZoneCrossedBy(start, end);
+    if (blocked != null) {
+      throw new IllegalStateException(
+          String.format(
+              "path from (%.2f, %.2f) to (%.2f, %.2f) would enter avoidance zone '%s'",
+              start.getX(), start.getY(), end.getX(), end.getY(), blocked.name()));
+    }
   }
 
   public Command getAutonomousCommand() {

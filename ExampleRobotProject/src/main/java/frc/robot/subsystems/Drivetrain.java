@@ -8,6 +8,8 @@ import edu.wpi.first.math.MathUtil;
 import edu.wpi.first.math.geometry.Pose2d;
 import edu.wpi.first.math.geometry.Rotation2d;
 import edu.wpi.first.wpilibj.TimedRobot;
+import edu.wpi.first.wpilibj.smartdashboard.Field2d;
+import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
 import frc.robot.llm.LlmCommands;
@@ -27,6 +29,14 @@ public class Drivetrain extends SubsystemBase {
   private Pose2d m_pose = new Pose2d();
   private double m_speed; // m/s, forward positive
   private double m_turnRate; // deg/s, CCW positive
+
+  /** Field widget for dashboards (Glass, Shuffleboard, Elastic, AdvantageScope). */
+  private final Field2d m_field = new Field2d();
+
+  public Drivetrain() {
+    SmartDashboard.putData("Field", m_field);
+    m_field.setRobotPose(m_pose);
+  }
 
   /** Directly set chassis velocities. */
   public void drive(double speedMetersPerSecond, double turnDegreesPerSecond) {
@@ -102,6 +112,8 @@ public class Drivetrain extends SubsystemBase {
     m_pose =
         new Pose2d(
             m_pose.getX() + dx, m_pose.getY() + dy, heading.plus(Rotation2d.fromRadians(dTheta)));
+
+    m_field.setRobotPose(m_pose);
 
     LlmCommands.publishState("drivetrain/x_meters", m_pose.getX());
     LlmCommands.publishState("drivetrain/y_meters", m_pose.getY());
