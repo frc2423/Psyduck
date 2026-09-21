@@ -12,7 +12,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMe
 from langchain_core.tools import BaseTool
 from langgraph.checkpoint.memory import InMemorySaver
 
-DEFAULT_MODEL = os.environ.get("OPENAI_MODEL", "gpt-5-mini")
+DEFAULT_MODEL = os.environ.get("OPENAI_MODEL", "gpt-5.6-luna")
 
 SYSTEM_PROMPT = """\
 You are the operator interface for an FRC (FIRST Robotics Competition) robot. You control the
@@ -69,7 +69,9 @@ Guidelines:
 
 def create_robot_agent(tools: list[BaseTool], model: str | None = None):
     """Build a tool-calling agent with in-memory conversation history."""
-    llm = init_chat_model(model or DEFAULT_MODEL, model_provider="openai")
+    # Newer reasoning models (gpt-5.6-luna, ...) only allow function tools via the
+    # Responses API; chat/completions rejects tools + reasoning_effort for them.
+    llm = init_chat_model(model or DEFAULT_MODEL, model_provider="openai", use_responses_api=True)
     return create_agent(
         model=llm,
         tools=tools,
