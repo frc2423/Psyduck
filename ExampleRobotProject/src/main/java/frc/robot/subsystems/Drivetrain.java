@@ -7,6 +7,7 @@ package frc.robot.subsystems;
 import edu.wpi.first.math.MathUtil;
 import edu.wpi.first.math.geometry.Pose2d;
 import edu.wpi.first.math.geometry.Rotation2d;
+import edu.wpi.first.math.geometry.Translation2d;
 import edu.wpi.first.wpilibj.TimedRobot;
 import edu.wpi.first.wpilibj.smartdashboard.Field2d;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
@@ -25,6 +26,10 @@ public class Drivetrain extends SubsystemBase {
   public static final double kMaxTurnDegreesPerSecond = 90.0;
   private static final double kDistanceToleranceMeters = 0.02;
   private static final double kAngleToleranceDegrees = 1.0;
+  /** Tighter alignment before a point-to-point drive, so a long leg does not miss the target. */
+  private static final double kPointHeadingToleranceDegrees = 0.3;
+  /** Slowest in-place turn rate; keeps small corrections from stalling short of the target. */
+  private static final double kMinTurnDegreesPerSecond = 10.0;
 
   private Pose2d m_pose = new Pose2d();
   private double m_speed; // m/s, forward positive
@@ -50,6 +55,12 @@ public class Drivetrain extends SubsystemBase {
 
   public Pose2d getPose() {
     return m_pose;
+  }
+
+  /** Teleport the simulated robot, e.g. to a legal starting position inside the field. */
+  public void resetPose(Pose2d pose) {
+    m_pose = pose;
+    m_field.setRobotPose(m_pose);
   }
 
   public double getHeadingDegrees() {
@@ -80,21 +91,53 @@ public class Drivetrain extends SubsystemBase {
 
   /** Rotate in place to an absolute field heading (degrees, CCW positive). */
   public Command turnToAngle(double degrees) {
-    return run(
-            () -> {
-              double error = MathUtil.inputModulus(degrees - getHeadingDegrees(), -180.0, 180.0);
-              double rate = MathUtil.clamp(error * 3.0, -kMaxTurnDegreesPerSecond, kMaxTurnDegreesPerSecond);
-              if (Math.abs(rate) < 10.0) {
-                rate = Math.copySign(10.0, error);
-              }
-              drive(0.0, rate);
-            })
-        .until(
-            () ->
-                Math.abs(MathUtil.inputModulus(degrees - getHeadingDegrees(), -180.0, 180.0))
-                    < kAngleToleranceDegrees)
+    return run(() -> drive(0.0, turnRateFor(headingError(degrees))))
+        .until(() -> Math.abs(headingError(degrees)) < kAngleToleranceDegrees)
         .finallyDo(this::stop)
         .withName("TurnToAngle");
+  }
+
+  /**
+   * Turn in place to face {@code target}, then drive straight to it. The heading is re-aimed at
+   * the target every loop while driving, so the robot converges on the point rather than on a
+   * dead-reckoned distance.
+   */
+  public Command driveToPoint(Translation2d target) {
+    final boolean[] aligned = {false};
+    return runOnce(() -> aligned[0] = false)
+        .andThen(
+            run(
+                () -> {
+                  Translation2d delta = target.minus(m_pose.getTranslation());
+                  double error = headingError(delta.getAngle().getDegrees());
+                  if (!aligned[0]) {
+                    aligned[0] = Math.abs(error) < kPointHeadingToleranceDegrees;
+                    drive(0.0, turnRateFor(error));
+                    return;
+                  }
+                  double remaining = delta.getNorm();
+                  double speed = MathUtil.clamp(remaining * 2.0, 0.1, kMaxSpeedMetersPerSecond);
+                  // Gentle steering only; close to the target the bearing swings wildly.
+                  double steer = remaining > 0.1 ? MathUtil.clamp(error * 3.0, -15.0, 15.0) : 0.0;
+                  drive(speed, steer);
+                }))
+        .until(() -> target.getDistance(m_pose.getTranslation()) < kDistanceToleranceMeters)
+        .finallyDo(this::stop)
+        .withName("DriveToPoint");
+  }
+
+  /** Signed shortest rotation from the current heading to {@code degrees}. */
+  private double headingError(double degrees) {
+    return MathUtil.inputModulus(degrees - getHeadingDegrees(), -180.0, 180.0);
+  }
+
+  /** Proportional in-place turn rate with a floor so the last degree does not take forever. */
+  private static double turnRateFor(double error) {
+    double rate = MathUtil.clamp(error * 3.0, -kMaxTurnDegreesPerSecond, kMaxTurnDegreesPerSecond);
+    if (Math.abs(rate) < kMinTurnDegreesPerSecond) {
+      rate = Math.copySign(kMinTurnDegreesPerSecond, error);
+    }
+    return rate;
   }
 
   /** Immediately stop and remain stopped. */

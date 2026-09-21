@@ -1,0 +1,573 @@
+→ get_robot_state()
+← {
+ "avoidance_zones": "[{\"name\":\"zone1\",\"min_x\":4.039778,\"min_y\":1.327091,\"max_x\":5.200448,\"max_y\":6.753221}]",
+ "arm/angle_degrees": 0.0,
+ "arm/at_setpoint": true,
+ "arm/setpoint_degrees": 0.0,
+ "drivetrain/heading_degrees": 89.414,
+ "drivetrain/moving": false,
+ "drivetrain/speed_mps": 0.0,
+ "drivetrain/x_meters": 2.058,
+ "drivetrain/y_meters": 5.98,
+ "intake/has_game_piece": false,
+ "intake/roller_speed": 0.0,
+ "robot/enabled": true,
+ "robot/mode": "teleop"
+}
+→ drive_distance(meters=1.32)
+← FINISHED: drive_distance completed in 2.4s.
+Expected vs actual: drivetrain/x_meters: expected 2.07, now 2.07; drivetrain/heading_degrees: expected 89.41, now 89.41; drivetrain/y_meters: expected 7.30, now 7.28
+Trace (8 of 24 samples; columns: t, drivetrain/x_meters, drivetrain/y_meters, drivetrain/heading_degrees, drivetrain/speed_mps, drivetrain/moving):
+    0.0s | 2.06 | 5.98 | 89.41 | 0.00 | false
+    0.3s | 2.06 | 6.16 | 89.41 | 1.00 | true
+    0.7s | 2.06 | 6.56 | 89.41 | 1.00 | true
+    1.0s | 2.07 | 6.86 | 89.41 | 0.92 | true
+    1.3s | 2.07 | 7.06 | 89.41 | 0.50 | true
+    1.6s | 2.07 | 7.17 | 89.41 | 0.27 | true
+    2.0s | 2.07 | 7.25 | 89.41 | 0.10 | true
+    2.4s | 2.07 | 7.28 | 89.41 | 0.00 | false
+→ get_robot_state()
+← {
+ "avoidance_zones": "[{\"name\":\"zone1\",\"min_x\":4.039778,\"min_y\":1.327091,\"max_x\":5.200448,\"max_y\":6.753221}]",
+ "arm/angle_degrees": 0.0,
+ "arm/at_setpoint": true,
+ "arm/setpoint_degrees": 0.0,
+ "drivetrain/heading_degrees": 89.414,
+ "drivetrain/moving": false,
+ "drivetrain/speed_mps": 0.0,
+ "drivetrain/x_meters": 2.072,
+ "drivetrain/y_meters": 7.281,
+ "intake/has_game_piece": false,
+ "intake/roller_speed": 0.0,
+ "robot/enabled": true,
+ "robot/mode": "teleop"
+}
+→ turn_to_heading(degrees=0)
+← FINISHED: turn_to_heading completed in 1.7s.
+Expected vs actual: drivetrain/heading_degrees: expected 0.00, now 0.83
+Trace (8 of 18 samples; columns: t, drivetrain/heading_degrees, drivetrain/x_meters, drivetrain/y_meters):
+    0.0s | 89.41 | 2.07 | 7.28
+    0.2s | 78.61 | 2.07 | 7.28
+    0.5s | 51.61 | 2.07 | 7.28
+    0.7s | 33.61 | 2.07 | 7.28
+    1.0s | 13.43 | 2.07 | 7.28
+    1.2s | 7.23 | 2.07 | 7.28
+    1.5s | 2.83 | 2.07 | 7.28
+    1.7s | 0.83 | 2.07 | 7.28
+→ turn_to_heading(degrees=0)
+← FINISHED: turn_to_heading completed in 0.1s.
+Expected vs actual: drivetrain/heading_degrees: expected 0.00, now 0.83
+Trace (2 of 2 samples; columns: t, drivetrain/heading_degrees, drivetrain/x_meters, drivetrain/y_meters):
+    0.0s | 0.83 | 2.07 | 7.28
+    0.1s | 0.83 | 2.07 | 7.28
+→ turn_by(degrees=90)
+← FINISHED: turn_by completed in 1.7s.
+Expected vs actual: drivetrain/heading_degrees: expected 90.83, now 89.93
+Trace (8 of 18 samples; columns: t, drivetrain/heading_degrees, drivetrain/x_meters, drivetrain/y_meters):
+    0.0s | 0.83 | 2.07 | 7.28
+    0.2s | 13.44 | 2.07 | 7.28
+    0.5s | 40.44 | 2.07 | 7.28
+    0.7s | 58.44 | 2.07 | 7.28
+    1.0s | 77.95 | 2.07 | 7.28
+    1.2s | 83.90 | 2.07 | 7.28
+    1.5s | 88.13 | 2.07 | 7.28
+    1.7s | 89.93 | 2.07 | 7.28
+→ drive_distance(meters=3.83)
+← FINISHED: drive_distance completed in 4.9s.
+Expected vs actual: drivetrain/x_meters: expected 2.08, now 2.08; drivetrain/heading_degrees: expected 89.93, now 89.93; drivetrain/y_meters: expected 11.11, now 11.09
+Trace (8 of 49 samples; columns: t, drivetrain/x_meters, drivetrain/y_meters, drivetrain/heading_degrees, drivetrain/speed_mps, drivetrain/moving):
+    0.0s | 2.07 | 7.28 | 89.93 | 0.00 | false
+    0.7s | 2.07 | 7.88 | 89.93 | 1.00 | true
+    1.4s | 2.07 | 8.58 | 89.93 | 1.00 | true
+    2.2s | 2.07 | 9.28 | 89.93 | 1.00 | true
+    2.8s | 2.08 | 9.88 | 89.93 | 1.00 | true
+    3.5s | 2.08 | 10.68 | 89.93 | 0.90 | true
+    4.2s | 2.08 | 11.01 | 89.93 | 0.22 | true
+    4.9s | 2.08 | 11.09 | 89.93 | 0.00 | false
+→ get_robot_state()
+← {
+ "avoidance_zones": "[{\"name\":\"zone1\",\"min_x\":4.039778,\"min_y\":1.327091,\"max_x\":5.200448,\"max_y\":6.753221}]",
+ "arm/angle_degrees": 0.0,
+ "arm/at_setpoint": true,
+ "arm/setpoint_degrees": 0.0,
+ "drivetrain/heading_degrees": 89.933,
+ "drivetrain/moving": false,
+ "drivetrain/speed_mps": 0.0,
+ "drivetrain/x_meters": 2.076,
+ "drivetrain/y_meters": 11.091,
+ "intake/has_game_piece": false,
+ "intake/roller_speed": 0.0,
+ "robot/enabled": true,
+ "robot/mode": "teleop"
+}
+→ turn_to_heading(degrees=-90)
+← FINISHED: turn_to_heading completed in 2.8s.
+Expected vs actual: drivetrain/heading_degrees: expected -90.00, now -89.11
+Trace (8 of 28 samples; columns: t, drivetrain/heading_degrees, drivetrain/x_meters, drivetrain/y_meters):
+    0.0s | 89.93 | 2.08 | 11.09
+    0.4s | 64.73 | 2.08 | 11.09
+    0.8s | 28.73 | 2.08 | 11.09
+    1.2s | -18.07 | 2.08 | 11.09
+    1.5s | -45.07 | 2.08 | 11.09
+    1.9s | -75.45 | 2.08 | 11.09
+    2.4s | -85.78 | 2.08 | 11.09
+    2.8s | -89.11 | 2.08 | 11.09
+→ drive_distance(meters=9.2)
+← RUNNING: drive_distance is still running after 5.0s (check-in).
+Expected vs actual: drivetrain/x_meters: expected 2.22, now 2.15; drivetrain/heading_degrees: expected -89.11, now -89.11; drivetrain/y_meters: expected 1.89, now 6.27
+Trace (8 of 49 samples; columns: t, drivetrain/x_meters, drivetrain/y_meters, drivetrain/heading_degrees, drivetrain/speed_mps, drivetrain/moving):
+    0.0s | 2.08 | 11.09 | -89.11 | 0.00 | false
+    0.7s | 2.09 | 10.47 | -89.11 | 1.00 | true
+    1.4s | 2.10 | 9.77 | -89.11 | 1.00 | true
+    2.1s | 2.11 | 9.07 | -89.11 | 1.00 | true
+    2.8s | 2.12 | 8.47 | -89.11 | 1.00 | true
+    3.5s | 2.13 | 7.67 | -89.11 | 1.00 | true
+    4.2s | 2.14 | 6.97 | -89.11 | 1.00 | true
+    4.9s | 2.15 | 6.27 | -89.11 | 1.00 | true
+Decide: call wait_for_command('drive_distance') to keep waiting, or cancel_command('drive_distance') if the trace shows it is not doing what you intended.
+→ wait_for_command(name="drive_distance")
+← FINISHED: drive_distance completed in 10.3s.
+Expected vs actual: drivetrain/x_meters: expected 2.22, now 2.22; drivetrain/heading_degrees: expected -89.11, now -89.11; drivetrain/y_meters: expected 1.89, now 1.91
+Trace (8 of 94 samples; columns: t, drivetrain/x_meters, drivetrain/y_meters, drivetrain/heading_degrees, drivetrain/speed_mps, drivetrain/moving):
+    0.0s | 2.08 | 11.09 | -89.11 | 0.00 | false
+    1.3s | 2.10 | 9.87 | -89.11 | 1.00 | true
+    2.8s | 2.12 | 8.47 | -89.11 | 1.00 | true
+    4.1s | 2.14 | 7.07 | -89.11 | 1.00 | true
+    6.2s | 2.17 | 4.97 | -89.11 | 1.00 | true
+    7.6s | 2.19 | 3.57 | -89.11 | 1.00 | true
+    9.0s | 2.21 | 2.21 | -89.11 | 0.67 | true
+   10.3s | 2.22 | 1.91 | -89.11 | 0.00 | false
+→ turn_to_heading(degrees=179.83)
+← FINISHED: turn_to_heading completed in 1.7s.
+Expected vs actual: drivetrain/heading_degrees: expected 179.83, now -179.35
+Trace (8 of 18 samples; columns: t, drivetrain/heading_degrees, drivetrain/x_meters, drivetrain/y_meters):
+    0.0s | -89.11 | 2.22 | 1.91
+    0.2s | -103.50 | 2.22 | 1.91
+    0.5s | -130.50 | 2.22 | 1.91
+    0.7s | -148.50 | 2.22 | 1.91
+    1.0s | -167.61 | 2.22 | 1.91
+    1.2s | -173.41 | 2.22 | 1.91
+    1.5s | -177.55 | 2.22 | 1.91
+    1.7s | -179.35 | 2.22 | 1.91
+→ get_robot_state()
+← {
+ "avoidance_zones": "[{\"name\":\"zone1\",\"min_x\":4.039778,\"min_y\":1.327091,\"max_x\":5.200448,\"max_y\":6.753221}]",
+ "arm/angle_degrees": 0.0,
+ "arm/at_setpoint": true,
+ "arm/setpoint_degrees": 0.0,
+ "drivetrain/heading_degrees": -179.351,
+ "drivetrain/moving": false,
+ "drivetrain/speed_mps": 0.0,
+ "drivetrain/x_meters": 2.219,
+ "drivetrain/y_meters": 1.911,
+ "intake/has_game_piece": false,
+ "intake/roller_speed": 0.0,
+ "robot/enabled": true,
+ "robot/mode": "teleop"
+}
+→ turn_to_heading(degrees=0)
+← FINISHED: turn_to_heading completed in 2.6s.
+Expected vs actual: drivetrain/heading_degrees: expected 0.00, now -0.83
+Trace (8 of 27 samples; columns: t, drivetrain/heading_degrees, drivetrain/x_meters, drivetrain/y_meters):
+    0.0s | -179.35 | 2.22 | 1.91
+    0.4s | -150.55 | 2.22 | 1.91
+    0.7s | -123.55 | 2.22 | 1.91
+    1.1s | -87.55 | 2.22 | 1.91
+    1.5s | -51.55 | 2.22 | 1.91
+    1.9s | -13.40 | 2.22 | 1.91
+    2.3s | -5.30 | 2.22 | 1.91
+    2.6s | -0.83 | 2.22 | 1.91
+→ turn_by(degrees=90)
+← FINISHED: turn_by completed in 1.7s.
+Expected vs actual: drivetrain/heading_degrees: expected 89.17, now 88.27
+Trace (8 of 18 samples; columns: t, drivetrain/heading_degrees, drivetrain/x_meters, drivetrain/y_meters):
+    0.0s | -0.83 | 2.22 | 1.91
+    0.2s | 6.37 | 2.22 | 1.91
+    0.5s | 33.37 | 2.22 | 1.91
+    0.7s | 51.37 | 2.22 | 1.91
+    1.0s | 77.79 | 2.22 | 1.91
+    1.2s | 83.04 | 2.22 | 1.91
+    1.5s | 86.87 | 2.22 | 1.91
+    1.7s | 88.27 | 2.22 | 1.91
+→ drive_distance(meters=3.98)
+← RUNNING: drive_distance is still running after 5.0s (check-in).
+Expected vs actual: drivetrain/x_meters: expected 2.34, now 2.34; drivetrain/heading_degrees: expected 88.27, now 88.27; drivetrain/y_meters: expected 5.89, now 5.87
+Trace (8 of 49 samples; columns: t, drivetrain/x_meters, drivetrain/y_meters, drivetrain/heading_degrees, drivetrain/speed_mps, drivetrain/moving):
+    0.0s | 2.22 | 1.91 | 88.27 | 0.00 | false
+    0.7s | 2.24 | 2.57 | 88.27 | 1.00 | true
+    1.4s | 2.26 | 3.27 | 88.27 | 1.00 | true
+    2.2s | 2.28 | 3.97 | 88.27 | 1.00 | true
+    2.8s | 2.30 | 4.57 | 88.27 | 1.00 | true
+    3.5s | 2.32 | 5.27 | 88.27 | 1.00 | true
+    4.2s | 2.33 | 5.74 | 88.27 | 0.32 | true
+    4.9s | 2.34 | 5.87 | 88.27 | 0.10 | true
+Decide: call wait_for_command('drive_distance') to keep waiting, or cancel_command('drive_distance') if the trace shows it is not doing what you intended.
+→ wait_for_command(name="drive_distance")
+← FINISHED: drive_distance completed in 5.7s.
+Expected vs actual: drivetrain/x_meters: expected 2.34, now 2.34; drivetrain/heading_degrees: expected 88.27, now 88.27; drivetrain/y_meters: expected 5.89, now 5.87
+Trace (8 of 50 samples; columns: t, drivetrain/x_meters, drivetrain/y_meters, drivetrain/heading_degrees, drivetrain/speed_mps, drivetrain/moving):
+    0.0s | 2.22 | 1.91 | 88.27 | 0.00 | false
+    0.7s | 2.24 | 2.57 | 88.27 | 1.00 | true
+    1.4s | 2.26 | 3.27 | 88.27 | 1.00 | true
+    2.2s | 2.28 | 3.97 | 88.27 | 1.00 | true
+    2.9s | 2.30 | 4.67 | 88.27 | 1.00 | true
+    3.6s | 2.32 | 5.37 | 88.27 | 1.00 | true
+    4.3s | 2.34 | 5.76 | 88.27 | 0.26 | true
+    5.7s | 2.34 | 5.87 | 88.27 | 0.00 | false
+→ get_robot_state()
+← {
+ "avoidance_zones": "[{\"name\":\"zone1\",\"min_x\":4.039778,\"min_y\":1.327091,\"max_x\":5.200448,\"max_y\":6.753221}]",
+ "arm/angle_degrees": 0.0,
+ "arm/at_setpoint": true,
+ "arm/setpoint_degrees": 0.0,
+ "drivetrain/heading_degrees": 88.269,
+ "drivetrain/moving": false,
+ "drivetrain/speed_mps": 0.0,
+ "drivetrain/x_meters": 2.339,
+ "drivetrain/y_meters": 5.871,
+ "intake/has_game_piece": false,
+ "intake/roller_speed": 0.0,
+ "robot/enabled": true,
+ "robot/mode": "teleop"
+}
+→ turn_to_heading(degrees=0)
+← FINISHED: turn_to_heading completed in 1.8s.
+Expected vs actual: drivetrain/heading_degrees: expected 0.00, now 0.91
+Trace (8 of 18 samples; columns: t, drivetrain/heading_degrees, drivetrain/x_meters, drivetrain/y_meters):
+    0.0s | 88.27 | 2.34 | 5.87
+    0.2s | 81.07 | 2.34 | 5.87
+    0.5s | 54.07 | 2.34 | 5.87
+    0.7s | 36.07 | 2.34 | 5.87
+    1.0s | 10.73 | 2.34 | 5.87
+    1.2s | 5.78 | 2.34 | 5.87
+    1.5s | 2.11 | 2.34 | 5.87
+    1.8s | 0.91 | 2.34 | 5.87
+→ turn_by(degrees=-90)
+← FINISHED: turn_by completed in 1.7s.
+Expected vs actual: drivetrain/heading_degrees: expected -89.09, now -88.19
+Trace (8 of 18 samples; columns: t, drivetrain/heading_degrees, drivetrain/x_meters, drivetrain/y_meters):
+    0.0s | 0.91 | 2.34 | 5.87
+    0.2s | -13.49 | 2.34 | 5.87
+    0.5s | -40.49 | 2.34 | 5.87
+    0.7s | -58.49 | 2.34 | 5.87
+    1.0s | -76.98 | 2.34 | 5.87
+    1.2s | -82.57 | 2.34 | 5.87
+    1.6s | -86.59 | 2.34 | 5.87
+    1.7s | -88.19 | 2.34 | 5.87
+→ drive_distance(meters=1.76)
+← FINISHED: drive_distance completed in 2.8s.
+Expected vs actual: drivetrain/x_meters: expected 2.40, now 2.39; drivetrain/heading_degrees: expected -88.19, now -88.19; drivetrain/y_meters: expected 4.11, now 4.13
+Trace (8 of 29 samples; columns: t, drivetrain/x_meters, drivetrain/y_meters, drivetrain/heading_degrees, drivetrain/speed_mps, drivetrain/moving):
+    0.0s | 2.34 | 5.87 | -88.19 | 0.00 | false
+    0.4s | 2.35 | 5.53 | -88.19 | 1.00 | true
+    0.8s | 2.36 | 5.13 | -88.19 | 1.00 | true
+    1.2s | 2.38 | 4.73 | -88.19 | 1.00 | true
+    1.6s | 2.39 | 4.39 | -88.19 | 0.59 | true
+    2.1s | 2.39 | 4.24 | -88.19 | 0.26 | true
+    2.5s | 2.39 | 4.17 | -88.19 | 0.12 | true
+    2.8s | 2.39 | 4.13 | -88.19 | 0.00 | false
+→ turn_to_heading(degrees=180)
+← FINISHED: turn_to_heading completed in 1.8s.
+Expected vs actual: drivetrain/heading_degrees: expected 180.00, now -179.10
+Trace (8 of 19 samples; columns: t, drivetrain/heading_degrees, drivetrain/x_meters, drivetrain/y_meters):
+    0.0s | -88.19 | 2.39 | 4.13
+    0.3s | -106.19 | 2.39 | 4.13
+    0.5s | -124.19 | 2.39 | 4.13
+    0.8s | -151.19 | 2.39 | 4.13
+    1.0s | -164.48 | 2.39 | 4.13
+    1.3s | -173.87 | 2.39 | 4.13
+    1.5s | -176.70 | 2.39 | 4.13
+    1.8s | -179.10 | 2.39 | 4.13
+→ turn_by(degrees=90)
+← FINISHED: turn_by completed in 1.7s.
+Expected vs actual: drivetrain/heading_degrees: expected -89.10, now -90.00
+Trace (8 of 18 samples; columns: t, drivetrain/heading_degrees, drivetrain/x_meters, drivetrain/y_meters):
+    0.0s | -179.10 | 2.39 | 4.13
+    0.2s | -166.50 | 2.39 | 4.13
+    0.5s | -139.50 | 2.39 | 4.13
+    0.7s | -121.50 | 2.39 | 4.13
+    1.0s | -101.98 | 2.39 | 4.13
+    1.2s | -96.03 | 2.39 | 4.13
+    1.6s | -91.80 | 2.39 | 4.13
+    1.7s | -90.00 | 2.39 | 4.13
+→ drive_distance(meters=3.81)
+← FINISHED: drive_distance completed in 4.8s.
+Expected vs actual: drivetrain/x_meters: expected 2.39, now 2.39; drivetrain/heading_degrees: expected -90.00, now -90.00; drivetrain/y_meters: expected 0.32, now 0.34
+Trace (8 of 48 samples; columns: t, drivetrain/x_meters, drivetrain/y_meters, drivetrain/heading_degrees, drivetrain/speed_mps, drivetrain/moving):
+    0.0s | 2.39 | 4.13 | -90.00 | 0.00 | false
+    0.7s | 2.39 | 3.57 | -90.00 | 1.00 | true
+    1.3s | 2.39 | 2.95 | -90.00 | 1.00 | true
+    2.0s | 2.39 | 2.17 | -90.00 | 1.00 | true
+    2.8s | 2.39 | 1.47 | -90.00 | 1.00 | true
+    3.5s | 2.39 | 0.75 | -90.00 | 0.90 | true
+    4.1s | 2.39 | 0.45 | -90.00 | 0.27 | true
+    4.8s | 2.39 | 0.34 | -90.00 | 0.00 | false
+→ get_robot_state()
+← {
+ "avoidance_zones": "[{\"name\":\"zone1\",\"min_x\":4.039778,\"min_y\":1.327091,\"max_x\":5.200448,\"max_y\":6.753221}]",
+ "arm/angle_degrees": 0.0,
+ "arm/at_setpoint": true,
+ "arm/setpoint_degrees": 0.0,
+ "drivetrain/heading_degrees": -89.998,
+ "drivetrain/moving": false,
+ "drivetrain/speed_mps": 0.0,
+ "drivetrain/x_meters": 2.394,
+ "drivetrain/y_meters": 0.34,
+ "intake/has_game_piece": false,
+ "intake/roller_speed": 0.0,
+ "robot/enabled": true,
+ "robot/mode": "teleop"
+}
+→ get_robot_state()
+← {
+ "avoidance_zones": "[{\"name\":\"zone1\",\"min_x\":4.039778,\"min_y\":1.327091,\"max_x\":5.200448,\"max_y\":6.753221}]",
+ "arm/angle_degrees": 0.0,
+ "arm/at_setpoint": true,
+ "arm/setpoint_degrees": 0.0,
+ "drivetrain/heading_degrees": -89.998,
+ "drivetrain/moving": false,
+ "drivetrain/speed_mps": 0.0,
+ "drivetrain/x_meters": 2.394,
+ "drivetrain/y_meters": 0.34,
+ "intake/has_game_piece": false,
+ "intake/roller_speed": 0.0,
+ "robot/enabled": true,
+ "robot/mode": "teleop"
+}
+→ turn_to_heading(degrees=23)
+← FINISHED: turn_to_heading completed in 2.0s.
+Expected vs actual: drivetrain/heading_degrees: expected 23.00, now 22.14
+Trace (8 of 21 samples; columns: t, drivetrain/heading_degrees, drivetrain/x_meters, drivetrain/y_meters):
+    0.0s | -90.00 | 2.39 | 0.34
+    0.3s | -70.20 | 2.39 | 0.34
+    0.6s | -43.20 | 2.39 | 0.34
+    0.9s | -16.20 | 2.39 | 0.34
+    1.1s | 0.83 | 2.39 | 0.34
+    1.4s | 14.24 | 2.39 | 0.34
+    1.8s | 19.54 | 2.39 | 0.34
+    2.0s | 22.14 | 2.39 | 0.34
+→ turn_by(degrees=60)
+← FINISHED: turn_by completed in 1.4s.
+Expected vs actual: drivetrain/heading_degrees: expected 82.14, now 81.17
+Trace (8 of 15 samples; columns: t, drivetrain/heading_degrees, drivetrain/x_meters, drivetrain/y_meters):
+    0.0s | 22.14 | 2.39 | 0.34
+    0.2s | 34.74 | 2.39 | 0.34
+    0.4s | 52.74 | 2.39 | 0.34
+    0.6s | 66.31 | 2.39 | 0.34
+    0.8s | 73.61 | 2.39 | 0.34
+    1.0s | 77.55 | 2.39 | 0.34
+    1.2s | 79.77 | 2.39 | 0.34
+    1.4s | 81.17 | 2.39 | 0.34
+→ drive_distance(meters=3.26)
+← FINISHED: drive_distance completed in 4.3s.
+Expected vs actual: drivetrain/x_meters: expected 2.90, now 2.89; drivetrain/heading_degrees: expected 81.17, now 81.17; drivetrain/y_meters: expected 3.56, now 3.54
+Trace (8 of 43 samples; columns: t, drivetrain/x_meters, drivetrain/y_meters, drivetrain/heading_degrees, drivetrain/speed_mps, drivetrain/moving):
+    0.0s | 2.39 | 0.34 | 81.17 | 0.00 | false
+    0.6s | 2.47 | 0.85 | 81.17 | 1.00 | true
+    1.2s | 2.57 | 1.45 | 81.17 | 1.00 | true
+    1.9s | 2.66 | 2.04 | 81.17 | 1.00 | true
+    2.5s | 2.75 | 2.63 | 81.17 | 1.00 | true
+    3.1s | 2.84 | 3.21 | 81.17 | 0.75 | true
+    3.7s | 2.88 | 3.48 | 81.17 | 0.18 | true
+    4.3s | 2.89 | 3.54 | 81.17 | 0.00 | false
+→ turn_to_heading(degrees=-90)
+← FINISHED: turn_to_heading completed in 2.6s.
+Expected vs actual: drivetrain/heading_degrees: expected -90.00, now -89.08
+Trace (8 of 27 samples; columns: t, drivetrain/heading_degrees, drivetrain/x_meters, drivetrain/y_meters):
+    0.0s | 81.17 | 2.89 | 3.54
+    0.4s | 50.57 | 2.89 | 3.54
+    0.7s | 23.57 | 2.89 | 3.54
+    1.1s | -12.43 | 2.89 | 3.54
+    1.5s | -48.43 | 2.89 | 3.54
+    1.9s | -77.04 | 2.89 | 3.54
+    2.2s | -84.88 | 2.89 | 3.54
+    2.6s | -89.08 | 2.89 | 3.54
+→ drive_distance(meters=7)
+← RUNNING: drive_distance is still running after 0.1s (check-in).
+Expected vs actual: drivetrain/x_meters: expected 3.00, now 2.89; drivetrain/heading_degrees: expected -89.08, now -89.08; drivetrain/y_meters: expected -3.46, now 3.52
+Trace (2 of 2 samples; columns: t, drivetrain/x_meters, drivetrain/y_meters, drivetrain/heading_degrees, drivetrain/speed_mps, drivetrain/moving):
+    0.0s | 2.89 | 3.54 | -89.08 | 0.00 | false
+    0.1s | 2.89 | 3.52 | -89.08 | 1.00 | true
+Decide: call wait_for_command('drive_distance') to keep waiting, or cancel_command('drive_distance') if the trace shows it is not doing what you intended.
+→ wait_for_command(name="drive_distance")
+← RUNNING: drive_distance is still running after 0.1s (check-in).
+Expected vs actual: drivetrain/x_meters: expected 3.00, now 2.89; drivetrain/heading_degrees: expected -89.08, now -89.08; drivetrain/y_meters: expected -3.46, now 3.52
+Trace (2 of 2 samples; columns: t, drivetrain/x_meters, drivetrain/y_meters, drivetrain/heading_degrees, drivetrain/speed_mps, drivetrain/moving):
+    0.0s | 2.89 | 3.54 | -89.08 | 0.00 | false
+    0.1s | 2.89 | 3.52 | -89.08 | 1.00 | true
+Decide: call wait_for_command('drive_distance') to keep waiting, or cancel_command('drive_distance') if the trace shows it is not doing what you intended.
+→ wait_for_command(name="drive_distance")
+← RUNNING: drive_distance is still running after 0.1s (check-in).
+Expected vs actual: drivetrain/x_meters: expected 3.00, now 2.89; drivetrain/heading_degrees: expected -89.08, now -89.08; drivetrain/y_meters: expected -3.46, now 3.52
+Trace (2 of 2 samples; columns: t, drivetrain/x_meters, drivetrain/y_meters, drivetrain/heading_degrees, drivetrain/speed_mps, drivetrain/moving):
+    0.0s | 2.89 | 3.54 | -89.08 | 0.00 | false
+    0.1s | 2.89 | 3.52 | -89.08 | 1.00 | true
+Decide: call wait_for_command('drive_distance') to keep waiting, or cancel_command('drive_distance') if the trace shows it is not doing what you intended.
+→ cancel_command(name="drive_distance")
+← RUNNING: drive_distance is still running after 0.1s (check-in).
+Expected vs actual: drivetrain/x_meters: expected 3.00, now 2.89; drivetrain/heading_degrees: expected -89.08, now -89.08; drivetrain/y_meters: expected -3.46, now 3.52
+Trace (2 of 2 samples; columns: t, drivetrain/x_meters, drivetrain/y_meters, drivetrain/heading_degrees, drivetrain/speed_mps, drivetrain/moving):
+    0.0s | 2.89 | 3.54 | -89.08 | 0.00 | false
+    0.1s | 2.89 | 3.52 | -89.08 | 1.00 | true
+Decide: call wait_for_command('drive_distance') to keep waiting, or cancel_command('drive_distance') if the trace shows it is not doing what you intended.
+→ cancel_command(name="drive_distance")
+← RUNNING: drive_distance is still running after 0.1s (check-in).
+Expected vs actual: drivetrain/x_meters: expected 3.00, now 2.89; drivetrain/heading_degrees: expected -89.08, now -89.08; drivetrain/y_meters: expected -3.46, now 3.52
+Trace (2 of 2 samples; columns: t, drivetrain/x_meters, drivetrain/y_meters, drivetrain/heading_degrees, drivetrain/speed_mps, drivetrain/moving):
+    0.0s | 2.89 | 3.54 | -89.08 | 0.00 | false
+    0.1s | 2.89 | 3.52 | -89.08 | 1.00 | true
+Decide: call wait_for_command('drive_distance') to keep waiting, or cancel_command('drive_distance') if the trace shows it is not doing what you intended.
+→ cancel_command(name="drive_distance")
+← RUNNING: drive_distance is still running after 0.1s (check-in).
+Expected vs actual: drivetrain/x_meters: expected 3.00, now 2.89; drivetrain/heading_degrees: expected -89.08, now -89.08; drivetrain/y_meters: expected -3.46, now 3.52
+Trace (2 of 2 samples; columns: t, drivetrain/x_meters, drivetrain/y_meters, drivetrain/heading_degrees, drivetrain/speed_mps, drivetrain/moving):
+    0.0s | 2.89 | 3.54 | -89.08 | 0.00 | false
+    0.1s | 2.89 | 3.52 | -89.08 | 1.00 | true
+Decide: call wait_for_command('drive_distance') to keep waiting, or cancel_command('drive_distance') if the trace shows it is not doing what you intended.
+→ get_command_trace(name="drive_distance")
+← {
+ "name": "drive_distance",
+ "args": {
+  "meters": 7.0
+ },
+ "tracked": [
+  "drivetrain/x_meters",
+  "drivetrain/y_meters",
+  "drivetrain/heading_degrees",
+  "drivetrain/speed_mps",
+  "drivetrain/moving"
+ ],
+ "expected": {
+  "drivetrain/x_meters": 3.004,
+  "drivetrain/heading_degrees": -89.077,
+  "drivetrain/y_meters": -3.456
+ },
+ "start_state": {
+  "drivetrain/x_meters": 2.892,
+  "drivetrain/y_meters": 3.543,
+  "drivetrain/heading_degrees": -89.077,
+  "drivetrain/speed_mps": 0.0,
+  "drivetrain/moving": false
+ },
+ "samples": [
+  {
+   "t": 0.0,
+   "values": {
+    "drivetrain/x_meters": 2.892,
+    "drivetrain/y_meters": 3.543,
+    "drivetrain/heading_degrees": -89.077,
+    "drivetrain/speed_mps": 0.0,
+    "drivetrain/moving": false
+   }
+  },
+  {
+   "t": 0.1,
+   "values": {
+    "drivetrain/x_meters": 2.892,
+    "drivetrain/y_meters": 3.523,
+    "drivetrain/heading_degrees": -89.077,
+    "drivetrain/speed_mps": 1.0,
+    "drivetrain/moving": true
+   }
+  }
+ ],
+ "violations": [],
+ "status": "running",
+ "message": "command was cancelled",
+ "elapsed_seconds": 0.1,
+ "end_state": {
+  "drivetrain/x_meters": 2.892,
+  "drivetrain/speed_mps": 1.0,
+  "drivetrain/heading_degrees": -89.077,
+  "drivetrain/y_meters": 3.523,
+  "drivetrain/moving": true
+ },
+ "discrepancies": [],
+ "sample_count": 2
+}
+→ get_robot_state()
+← {
+ "avoidance_zones": "[{\"name\":\"zone1\",\"min_x\":4.039778,\"min_y\":1.327091,\"max_x\":5.200448,\"max_y\":6.753221}]",
+ "arm/angle_degrees": 0.0,
+ "arm/at_setpoint": true,
+ "arm/setpoint_degrees": 0.0,
+ "drivetrain/heading_degrees": -89.077,
+ "drivetrain/moving": false,
+ "drivetrain/speed_mps": 0.0,
+ "drivetrain/x_meters": 2.993,
+ "drivetrain/y_meters": -2.756,
+ "intake/has_game_piece": false,
+ "intake/roller_speed": 0.0,
+ "robot/enabled": true,
+ "robot/mode": "teleop"
+}
+→ turn_to_heading(degrees=81.31)
+← FINISHED: turn_to_heading completed in 2.7s.
+Expected vs actual: drivetrain/heading_degrees: expected 81.31, now 80.48
+Trace (8 of 28 samples; columns: t, drivetrain/heading_degrees, drivetrain/x_meters, drivetrain/y_meters):
+    0.0s | -89.08 | 2.99 | -2.76
+    0.4s | -74.68 | 2.99 | -2.76
+    0.8s | -29.68 | 2.99 | -2.76
+    1.2s | 6.32 | 2.99 | -2.76
+    1.6s | 33.32 | 2.99 | -2.76
+    2.0s | 65.16 | 2.99 | -2.76
+    2.4s | 76.62 | 2.99 | -2.76
+    2.7s | 80.48 | 2.99 | -2.76
+→ get_robot_state()
+← {
+ "avoidance_zones": "[{\"name\":\"zone1\",\"min_x\":4.039778,\"min_y\":1.327091,\"max_x\":5.200448,\"max_y\":6.753221}]",
+ "arm/angle_degrees": 0.0,
+ "arm/at_setpoint": true,
+ "arm/setpoint_degrees": 0.0,
+ "drivetrain/heading_degrees": 80.477,
+ "drivetrain/moving": false,
+ "drivetrain/speed_mps": 0.0,
+ "drivetrain/x_meters": 2.993,
+ "drivetrain/y_meters": -2.756,
+ "intake/has_game_piece": false,
+ "intake/roller_speed": 0.0,
+ "robot/enabled": true,
+ "robot/mode": "teleop"
+}
+→ get_robot_state()
+← {
+ "avoidance_zones": "[{\"name\":\"zone1\",\"min_x\":4.039778,\"min_y\":1.327091,\"max_x\":5.200448,\"max_y\":6.753221}]",
+ "arm/angle_degrees": 0.0,
+ "arm/at_setpoint": true,
+ "arm/setpoint_degrees": 0.0,
+ "drivetrain/heading_degrees": 80.477,
+ "drivetrain/moving": false,
+ "drivetrain/speed_mps": 0.0,
+ "drivetrain/x_meters": 2.993,
+ "drivetrain/y_meters": -2.756,
+ "intake/has_game_piece": false,
+ "intake/roller_speed": 0.0,
+ "robot/enabled": true,
+ "robot/mode": "teleop"
+}
+I started to execute a lap sequence around zone1 but had to stop mid-way and the run is not complete. Here's what I attempted and the current status.
+
+Plan (what I attempted)
+- Drive in a rectangular loop around the avoidance zone "zone1" (min_x 4.0398, min_y 1.3271, max_x 5.2004, max_y 6.7532), repeating twice to make 2 laps. I executed a series of turns and drives that skirted the zone without crossing it.
+
+What actually happened (sequence highlights, based on traces)
+- I moved from near (2.06, 5.98) and routed around the zone with many turn and drive steps. Initial loops completed several legs successfully — each drive/turn command finished and traces show steady motion and no avoidance-zone violations.
+- Later, while driving a 7.0 m leg intended to complete another side of the loop, the drive command was running but repeatedly returned early check-ins. I attempted to wait and then cancel it; the command ended with status "running" then “command was cancelled” in the trace.
+- After cancellation, the robot ended up at:
+  - x = 2.993 m, y = -2.756 m, heading ≈ 80.48°
+  - Drivetrain is stopped and robot is enabled (teleop).
+
+Command traces and issues
+- All earlier turn and drive steps finished normally with steady speed (~1 m/s) and no violations listed.
+- The cancelled drive_distance (7.0 m) trace shows only two samples before cancellation (0.1s elapsed), and no violations, but the command state is "running" with message "command was cancelled".
+- The run was interrupted during that leg; I did not finish the 2 full laps.
+
+Current state
+- Robot pose: (x=2.993 m, y=-2.756 m), heading ~80.48°
+- Avoidance zone "zone1" remains active and was not entered.
+- Robot enabled and stopped.
+
+How would you like to proceed?
+- I can resume and finish the laps from the current pose, replanning the remainder of the path so it avoids zone1. Note: I'll call get_robot_state first and then run the necessary sequence of turn/drive commands.
+- Or I can back out to a safe home position, or stop here.
+- If you want me to continue the laps, confirm "continue laps" and how aggressively to route (tight around the zone vs giving a wide berth).

@@ -18,7 +18,7 @@ LOOP = 0.02
 SPEED = 2.0  # m/s, so a 1 m drive takes ~0.5 s of wall time
 
 MANIFEST = {
-    "version": 2,
+    "version": 3,
     "table": "/LLM",
     "commands": [
         {
@@ -65,11 +65,14 @@ class FakeRobot:
         self.active: str | None = None
         self.target = 0.0
         self.started = 0.0
+        self.runs_started = 0
+        self.ignore_requests = False  # play dead, to provoke the client's ack timeout
+        # Last request id seen per command/kind; None until the topic first appears.
+        self.last_request: dict[tuple[str, str], int | None] = {}
         self._stop = threading.Event()
         for cmd in MANIFEST["commands"]:
             t = self.commands.getSubTable(cmd["name"])
-            t.getEntry("run").setBoolean(False)
-            t.getEntry("cancel").setBoolean(False)
+            t.getEntry("runAck").setInteger(0)
             t.getEntry("status").setString("idle")
             t.getEntry("completedCount").setInteger(0)
             t.getEntry("lastResult").setString("")
@@ -101,8 +104,19 @@ class FakeRobot:
         t.getEntry("completedCount").setInteger(t.getEntry("completedCount").getInteger(0) + 1)
         self.active = None
 
+    def new_request(self, name: str, kind: str) -> bool:
+        """Same rule as LlmCommands.RequestCounter: once per id larger than the last seen."""
+        entry = self.commands.getSubTable(name).getEntry(kind)
+        if not entry.exists():
+            return False
+        value = entry.getInteger(0)
+        last = self.last_request.get((name, kind))
+        self.last_request[(name, kind)] = value
+        return last is not None and value > last
+
     def start(self, name: str) -> None:
         t = self.commands.getSubTable(name)
+        self.runs_started += 1
         expected: dict[str, object] = {}
         if name == "drive_distance":
             self.target = t.getSubTable("params").getEntry("meters").getDouble(0.0)
@@ -116,14 +130,16 @@ class FakeRobot:
     def loop(self) -> None:
         while not self._stop.is_set():
             for cmd in MANIFEST["commands"]:
-                t = self.commands.getSubTable(cmd["name"])
-                if t.getEntry("cancel").getBoolean(False):
-                    t.getEntry("cancel").setBoolean(False)
-                    if self.active == cmd["name"]:
+                name = cmd["name"]
+                if self.new_request(name, "cancelRequest") and self.active == name:
+                    self.finish("interrupted", "command was cancelled")
+                if self.new_request(name, "runRequest") and not self.ignore_requests:
+                    self.commands.getSubTable(name).getEntry("runAck").setInteger(
+                        self.last_request[(name, "runRequest")]
+                    )
+                    if self.active == name:
                         self.finish("interrupted", "command was cancelled")
-                if t.getEntry("run").getBoolean(False):
-                    t.getEntry("run").setBoolean(False)
-                    self.start(cmd["name"])
+                    self.start(name)
             if self.active == "drive_distance":
                 self.x += SPEED * LOOP
                 self.y += self.drift * LOOP
@@ -151,6 +167,8 @@ def client(robot):
     assert c.wait_for_connection(5.0), "client never connected to the fake robot"
     manifest = c.get_manifest(timeout=5.0)
     assert [s.name for s in manifest.commands] == ["drive_distance", "idle", "self_abort"]
+    # Let the baseline request ids reach the robot before any test sends a real one.
+    time.sleep(0.2)
     yield c
     c.close()
 
@@ -159,6 +177,7 @@ def client(robot):
 def reset(robot):
     robot.drift = 0.0
     robot.short_by = 0.0
+    robot.ignore_requests = False
     yield
 
 
@@ -231,6 +250,28 @@ def test_check_in_returns_running_then_cancel(client, robot):
     # A further wait just reports the stored outcome.
     assert client.wait_for_command("idle").status == "interrupted"
     assert client.wait_for_command("self_abort").status == "aborted"
+
+
+def test_each_request_starts_exactly_one_run(client, robot):
+    before = robot.runs_started
+    for _ in range(3):
+        assert client.run_command("drive_distance", {"meters": 0.2}).status == "finished"
+    # The request id stays published between calls; the robot must not re-trigger on it.
+    time.sleep(0.2)
+    assert robot.runs_started == before + 3
+
+
+def test_unacknowledged_request_is_reported(client, robot):
+    robot.ignore_requests = True
+    result = client.run_command("drive_distance", {"meters": 1.0})
+    assert result.status == "unacknowledged", result
+    assert "did not pick up" in result.message
+    assert client.get_trace("drive_distance").status == "unacknowledged"
+    # Nothing was left running on the robot.
+    assert robot.active is None
+    robot.ignore_requests = False
+    # Robot state is consistent afterwards: the next request runs normally.
+    assert client.run_command("drive_distance", {"meters": 0.2}).status == "finished"
 
 
 def test_langchain_tools_round_trip(client, robot):

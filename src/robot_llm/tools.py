@@ -118,6 +118,11 @@ def builtin_tools(client: RobotClient) -> list[BaseTool]:
         doing what you intended). Returns the final trace."""
         result = client.wait_for_command(name, check_in=0.0)
         if result.status != "running":
+            if client.get_status(name) == "running":
+                # Running on the robot but not tracked here (started by another client, or a
+                # run this client lost track of): cancel it anyway rather than leave it moving.
+                client.cancel_command(name)
+                return f"{name} was running outside this session; cancel request sent."
             return f"{name} is not running (status {result.status})."
         client.cancel_command(name)
         return describe_result(client.wait_for_command(name, check_in=2.0))

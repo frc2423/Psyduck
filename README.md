@@ -27,8 +27,8 @@ LangChain, ntcore, and OpenAI models. The robot is controlled through tools that
  ┌──────────────────────────┐   NetworkTables    ┌──────────────────────────────┐
  │ Python: robot_llm        │ ◄────────────────► │ Robot (Java, command-based)  │
  │  - reads /LLM/manifest   │                    │  LlmCommands registry        │
- │  - builds one LangChain  │  params + run ───► │   - publishes manifest       │
- │    tool per command      │  ◄── status/count  │   - schedules Command on run │
+ │  - builds one LangChain  │ params+request id► │   - publishes manifest       │
+ │    tool per command      │  ◄── status/count  │   - schedules Command per id │
  │  - OpenAI agent loop     │  ◄── state/*       │   - reports completion       │
  └──────────────────────────┘                    └──────────────────────────────┘
 ```
@@ -39,8 +39,9 @@ LangChain, ntcore, and OpenAI models. The robot is controlled through tools that
    generates a LangChain tool (with a Pydantic schema: types, min/max, choices) for each command,
    so **adding a command in Java automatically adds a tool for the LLM**.
 3. When the model calls a tool, the client writes the parameters to
-   `/LLM/commands/<name>/params/*`, sets `run = true`, and waits for `completedCount` to increment.
-   The robot schedules the command, then reports `status` (`finished` / `interrupted` /
+   `/LLM/commands/<name>/params/*`, writes a fresh request id to `runRequest`, and waits for
+   `completedCount` to increment. The robot acts exactly once per new id (echoing it in
+   `runAck`), schedules the command, then reports `status` (`finished` / `interrupted` /
    `rejected`) and `lastResult`, which is returned to the model.
 4. Subsystems publish telemetry under `/LLM/state/*`; the model reads it via `get_robot_state`.
 5. **While a command runs it is monitored on both sides.** The robot evaluates the command's
@@ -62,14 +63,27 @@ LangChain, ntcore, and OpenAI models. The robot is controlled through tools that
 | --- | --- | --- |
 | `manifest` | robot | JSON list of commands and parameters |
 | `commands/<name>/params/<p>` | client | parameter values for the next run |
-| `commands/<name>/run` | client → robot resets | set `true` to schedule |
-| `commands/<name>/cancel` | client → robot resets | set `true` to cancel a running instance |
+| `commands/<name>/runRequest` | client | request id; the robot runs once per id larger than the last it saw and adopts any other value as its baseline |
+| `commands/<name>/runAck` | robot | last request id acted on (the client reports `unacknowledged` if its id is not echoed within 1 s) |
+| `commands/<name>/cancelRequest` | client | request id; cancels the running instance |
 | `commands/<name>/status` | robot | `idle`, `running`, `finished`, `interrupted`, `aborted` (stall check / watchdog), `rejected` |
 | `commands/<name>/completedCount` | robot | increments each time a run ends |
 | `commands/<name>/lastResult` | robot | human-readable outcome (for `aborted`, the watchdog's reason) |
 | `commands/<name>/expected` | robot | JSON object of the end values the current run should reach |
-| `cancelAll` | client → robot resets | cancel everything |
+| `cancelAllRequest` | client | request id; cancel everything |
 | `state/<key>` | robot | telemetry (`drivetrain/x_meters`, `arm/angle_degrees`, `robot/enabled`, ...) |
+| `state/avoidance_zones` | robot | JSON array of rectangles the robot must not enter: the four `field_edge_*` boundary zones, then user zones |
+| `state/field_bounds` | robot | JSON `{min_x, min_y, max_x, max_y}` of the drivable area (field size from the season's AprilTag layout, less 0.5 m wall clearance) |
+
+Only the client publishes the request-id topics, so there is no writer race on them: the earlier
+boolean `run`/`cancel` flags were reset by the robot, which let a single request be consumed
+twice. Request ids are time-based, so a restarted client keeps counting upwards; an id that is
+not larger than the last one (or the first value the robot sees after booting) is adopted as the
+baseline without scheduling anything.
+
+Field frame: x/y are WPILib field coordinates in meters and heading 0° faces +x, 90° faces +y
+(counter-clockwise positive). The tool descriptions and system prompt spell this out so the model
+can turn zone coordinates into routes.
 
 ## Layout
 
@@ -102,8 +116,9 @@ tests/           Python tests: monitor rules/formatting, and RobotClient against
 | Tool | Parameters | Description |
 | --- | --- | --- |
 | `drive_distance` | `meters` (−10..10) | drive straight, signed distance |
-| `turn_to_heading` | `degrees` (−180..180) | rotate to an absolute heading |
+| `turn_to_heading` | `degrees` (−180..180) | rotate to an absolute field heading (0 = +x, 90 = +y) |
 | `turn_by` | `degrees` (−360..360) | rotate relative to the current heading |
+| `drive_to_point` | `x`, `y` (inside `field_bounds`) | turn toward a field position, then drive to it; one call per waypoint |
 | `stop_driving` | – | stop the drivetrain |
 | `arm_to_angle` | `degrees` (0..120) | move the arm to an angle |
 | `arm_to_preset` | `preset` ∈ stowed, intake, low, high | move the arm to a named position |
@@ -111,6 +126,11 @@ tests/           Python tests: monitor rules/formatting, and RobotClient against
 | `eject_game_piece` | – | reverse rollers briefly |
 | `score` | `level` ∈ low, high | arm up → eject → stow (no-op if nothing held) |
 | `say` | `message` | print to the robot console |
+| `add_avoidance_zone` | `name`, `x1`, `y1`, `x2`, `y2` | forbid a rectangle given by two opposite corners |
+| `clear_avoidance_zones` | – | remove user zones (the `field_edge_*` fence stays) |
+
+Every drive command is rejected up front if its straight-line path would cross a zone, and
+aborted by the robot watchdog if the robot enters one mid-run.
 
 ### Adding a command
 
@@ -194,7 +214,7 @@ cd robot-llm-frontend && npm install && npm run dev
 Open the URL Vite prints (it proxies `/ws` and `/api` to the bridge). The page shows the chat with
 inline tool calls/results, the currently running command with elapsed time and a cancel button,
 live telemetry from `/LLM/state`, and every command from the manifest with its parameters and
-status. **Stop all** in the toolbar sends `cancelAll`.
+status. **Stop all** in the toolbar sends `cancelAllRequest`.
 
 Bridge protocol (JSON over the WebSocket): server sends `hello`/`manifest` (command specs),
 `snapshot` (robot connection, telemetry, per-command status — only when something changes),

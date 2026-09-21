@@ -9,8 +9,9 @@ import edu.wpi.first.math.geometry.Translation2d;
 /**
  * An axis-aligned rectangular region of the field the robot must not enter.
  *
- * <p>Zones are defined by two opposite corners in field coordinates (meters). The corners are
- * normalised on construction, so "top left" / "bottom right" may be given in either order.
+ * <p>Zones are defined by two opposite corners in field coordinates (meters, WPILib field frame:
+ * +x along the field length, +y along its width). The corners are normalised on construction,
+ * so they may be given in either order.
  *
  * @param name short label shown to the LLM, e.g. {@code "charging_station"}
  * @param minX smallest x coordinate covered by the zone
@@ -21,15 +22,14 @@ import edu.wpi.first.math.geometry.Translation2d;
 public record AvoidanceZone(String name, double minX, double minY, double maxX, double maxY) {
   private static final double kEpsilon = 1e-9;
 
-  /** Build a zone from its top-left and bottom-right corners (field coordinates, meters). */
-  public static AvoidanceZone fromCorners(
-      String name, Translation2d topLeft, Translation2d bottomRight) {
+  /** Build a zone from any two opposite corners (field coordinates, meters). */
+  public static AvoidanceZone fromCorners(String name, Translation2d a, Translation2d b) {
     return new AvoidanceZone(
         name,
-        Math.min(topLeft.getX(), bottomRight.getX()),
-        Math.min(topLeft.getY(), bottomRight.getY()),
-        Math.max(topLeft.getX(), bottomRight.getX()),
-        Math.max(topLeft.getY(), bottomRight.getY()));
+        Math.min(a.getX(), b.getX()),
+        Math.min(a.getY(), b.getY()),
+        Math.max(a.getX(), b.getX()),
+        Math.max(a.getY(), b.getY()));
   }
 
   /** Whether the point lies inside (or on the edge of) the zone. */

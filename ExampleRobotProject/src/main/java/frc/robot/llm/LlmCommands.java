@@ -5,6 +5,7 @@
 package frc.robot.llm;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -34,9 +35,14 @@ import java.util.Map;
  *   <li>{@code manifest} (string) – JSON describing every registered command and its parameters.
  *       Published once by the robot; the client uses it to build tool definitions.
  *   <li>{@code commands/<name>/params/<param>} – written by the client before triggering.
- *   <li>{@code commands/<name>/run} (boolean) – client sets true to schedule; robot resets to
- *       false once the request has been consumed.
- *   <li>{@code commands/<name>/cancel} (boolean) – client sets true to cancel a running instance.
+ *   <li>{@code commands/<name>/runRequest} (integer) – request id written only by the client. The
+ *       robot schedules one run each time the value increases past the last id it handled; a
+ *       value that is not larger (a client restart, or the first value seen after the robot
+ *       boots) is adopted as the new baseline without running anything. Only the client
+ *       publishes this topic, so there is no writer race and a request cannot be consumed twice.
+ *   <li>{@code commands/<name>/runAck} (integer) – the last request id the robot acted on.
+ *   <li>{@code commands/<name>/cancelRequest} (integer) – request id, same rules; cancels the
+ *       running instance.
  *   <li>{@code commands/<name>/status} (string) – {@code idle}, {@code running}, {@code
  *       finished}, {@code interrupted}, {@code aborted} (the robot-side stall check or watchdog
  *       cancelled it) or {@code rejected}.
@@ -46,21 +52,30 @@ import java.util.Map;
  *   <li>{@code commands/<name>/lastResult} (string) – human-readable outcome of the last run.
  *   <li>{@code commands/<name>/expected} (string) – JSON object of the end values the current
  *       (or last) run was expected to reach, keyed by state key. Empty object if none declared.
- *   <li>{@code cancelAll} (boolean) – client sets true to cancel every scheduled command.
+ *   <li>{@code cancelAllRequest} (integer) – request id; cancels every scheduled command.
  *   <li>{@code state/<key>} – telemetry published by subsystems via {@link #publishState}.
  *   <li>{@code state/avoidance_zones} (string) – JSON array of rectangles the robot must not
- *       enter, maintained via {@link #addAvoidanceZone}. Each element has {@code name}, {@code
- *       min_x}, {@code min_y}, {@code max_x} and {@code max_y} in field meters.
+ *       enter: the field-boundary zones from {@link #setFieldBounds} followed by those added via
+ *       {@link #addAvoidanceZone}. Each element has {@code name}, {@code min_x}, {@code min_y},
+ *       {@code max_x} and {@code max_y} in field meters.
+ *   <li>{@code state/field_bounds} (string) – JSON object ({@code min_x}, {@code min_y}, {@code
+ *       max_x}, {@code max_y}) of the area the robot may drive in, if set.
  * </ul>
+ *
+ * <p>Field frame: x and y are field coordinates in meters (WPILib convention), heading 0 degrees
+ * points along +x, 90 degrees along +y, counter-clockwise positive.
  *
  * <p>Call {@link #periodic()} from {@code Robot.robotPeriodic()}.
  */
 public final class LlmCommands {
   private static final String TABLE_NAME = "LLM";
-  private static final int MANIFEST_VERSION = 2;
+  private static final int MANIFEST_VERSION = 3;
   /** Change in a tracked numeric value that counts as progress for the stall check. */
   private static final double STALL_EPSILON = 1e-3;
   private static final String AVOIDANCE_ZONES_KEY = "avoidance_zones";
+  private static final String FIELD_BOUNDS_KEY = "field_bounds";
+  /** How far beyond the field the boundary zones extend, so nothing can slip past them. */
+  private static final double BOUNDARY_DEPTH_METERS = 100.0;
 
   private static final LlmCommands kInstance = new LlmCommands();
 
@@ -68,10 +83,12 @@ public final class LlmCommands {
   private final NetworkTable m_commandsTable;
   private final NetworkTable m_stateTable;
   private final NetworkTableEntry m_manifestEntry;
-  private final NetworkTableEntry m_cancelAllEntry;
+  private final RequestCounter m_cancelAllRequests;
   private final ObjectMapper m_mapper = new ObjectMapper();
 
   private final Map<String, Registration> m_registrations = new LinkedHashMap<>();
+  /** Zones that fence the field edges; kept across {@link #clearAvoidanceZones}. */
+  private final List<AvoidanceZone> m_boundaryZones = new ArrayList<>();
   private final List<AvoidanceZone> m_avoidanceZones = new ArrayList<>();
   private boolean m_manifestDirty = true;
 
@@ -80,8 +97,7 @@ public final class LlmCommands {
     m_commandsTable = m_table.getSubTable("commands");
     m_stateTable = m_table.getSubTable("state");
     m_manifestEntry = m_table.getEntry("manifest");
-    m_cancelAllEntry = m_table.getEntry("cancelAll");
-    m_cancelAllEntry.setBoolean(false);
+    m_cancelAllRequests = new RequestCounter(m_table.getEntry("cancelAllRequest"));
     publishAvoidanceZones();
   }
 
@@ -108,26 +124,22 @@ public final class LlmCommands {
   }
 
   /**
-   * Define a rectangular area of the field the robot must not enter. The rectangle is given by its
-   * top-left and bottom-right corners in field coordinates (meters); the corners may be supplied
-   * in either order. The zone is published under {@code state/avoidance_zones} so the LLM can
-   * plan paths around it, and drivetrain commands consult {@link #getAvoidanceZones()} to refuse
-   * motions that would cross one.
+   * Define a rectangular area of the field the robot must not enter. The rectangle is given by any
+   * two opposite corners in field coordinates (meters), in either order. The zone is published
+   * under {@code state/avoidance_zones} so the LLM can plan paths around it, and drivetrain
+   * commands consult {@link #getAvoidanceZones()} to refuse motions that would cross one.
    *
    * @param name short label for the zone, e.g. {@code "charging_station"}
-   * @param topLeftX x coordinate of the top-left corner
-   * @param topLeftY y coordinate of the top-left corner
-   * @param bottomRightX x coordinate of the bottom-right corner
-   * @param bottomRightY y coordinate of the bottom-right corner
+   * @param x1 x coordinate of one corner
+   * @param y1 y coordinate of that corner
+   * @param x2 x coordinate of the opposite corner
+   * @param y2 y coordinate of the opposite corner
    * @return the normalised zone that was added
    */
   public static AvoidanceZone addAvoidanceZone(
-      String name, double topLeftX, double topLeftY, double bottomRightX, double bottomRightY) {
+      String name, double x1, double y1, double x2, double y2) {
     AvoidanceZone zone =
-        AvoidanceZone.fromCorners(
-            name,
-            new Translation2d(topLeftX, topLeftY),
-            new Translation2d(bottomRightX, bottomRightY));
+        AvoidanceZone.fromCorners(name, new Translation2d(x1, y1), new Translation2d(x2, y2));
     addAvoidanceZone(zone);
     return zone;
   }
@@ -139,15 +151,52 @@ public final class LlmCommands {
     System.out.println("[LLM] added avoidance zone " + zone);
   }
 
-  /** Remove every avoidance zone. */
+  /** Remove every avoidance zone added with {@link #addAvoidanceZone}. Field bounds stay. */
   public static void clearAvoidanceZones() {
     kInstance.m_avoidanceZones.clear();
     kInstance.publishAvoidanceZones();
   }
 
-  /** The current avoidance zones, in the order they were added. Read-only. */
+  /**
+   * Fence the drivable area of the field with four boundary zones ({@code field_edge_min_x},
+   * {@code field_edge_max_x}, {@code field_edge_min_y}, {@code field_edge_max_y}) that cover
+   * everything outside the given rectangle, and publish the rectangle as {@code
+   * state/field_bounds}. The bounds should already account for the robot's own size, since the
+   * robot pose is its centre. Replaces any previous bounds; {@link #clearAvoidanceZones} does
+   * not remove them.
+   */
+  public static void setFieldBounds(double minX, double minY, double maxX, double maxY) {
+    List<AvoidanceZone> zones = kInstance.m_boundaryZones;
+    zones.clear();
+    double lo = Math.min(minX, minY) - BOUNDARY_DEPTH_METERS;
+    double hi = Math.max(maxX, maxY) + BOUNDARY_DEPTH_METERS;
+    zones.add(new AvoidanceZone("field_edge_min_x", lo, lo, minX, hi));
+    zones.add(new AvoidanceZone("field_edge_max_x", maxX, lo, hi, hi));
+    zones.add(new AvoidanceZone("field_edge_min_y", lo, lo, hi, minY));
+    zones.add(new AvoidanceZone("field_edge_max_y", lo, maxY, hi, hi));
+    ObjectNode bounds = kInstance.m_mapper.createObjectNode();
+    bounds.put("min_x", minX);
+    bounds.put("min_y", minY);
+    bounds.put("max_x", maxX);
+    bounds.put("max_y", maxY);
+    publishState(FIELD_BOUNDS_KEY, kInstance.serialize(bounds));
+    kInstance.publishAvoidanceZones();
+    System.out.printf(
+        "[LLM] field bounds set to x %.2f..%.2f, y %.2f..%.2f%n", minX, maxX, minY, maxY);
+  }
+
+  /** Remove the field boundary zones and the published bounds. */
+  public static void clearFieldBounds() {
+    kInstance.m_boundaryZones.clear();
+    publishState(FIELD_BOUNDS_KEY, "");
+    kInstance.publishAvoidanceZones();
+  }
+
+  /** Every zone in force: the field boundary zones first, then user zones in insertion order. */
   public static List<AvoidanceZone> getAvoidanceZones() {
-    return Collections.unmodifiableList(kInstance.m_avoidanceZones);
+    List<AvoidanceZone> all = new ArrayList<>(kInstance.m_boundaryZones);
+    all.addAll(kInstance.m_avoidanceZones);
+    return Collections.unmodifiableList(all);
   }
 
   /**
@@ -155,7 +204,7 @@ public final class LlmCommands {
    * or {@code null} if the path is clear.
    */
   public static AvoidanceZone findZoneCrossedBy(Translation2d start, Translation2d end) {
-    for (AvoidanceZone zone : kInstance.m_avoidanceZones) {
+    for (AvoidanceZone zone : getAvoidanceZones()) {
       if (zone.intersectsSegment(start, end)) {
         return zone;
       }
@@ -165,21 +214,27 @@ public final class LlmCommands {
 
   private void publishAvoidanceZones() {
     ArrayNode zones = m_mapper.createArrayNode();
-    for (AvoidanceZone zone : m_avoidanceZones) {
-      ObjectNode node = zones.addObject();
-      node.put("name", zone.name());
-      node.put("min_x", zone.minX());
-      node.put("min_y", zone.minY());
-      node.put("max_x", zone.maxX());
-      node.put("max_y", zone.maxY());
+    for (List<AvoidanceZone> list : List.of(m_boundaryZones, m_avoidanceZones)) {
+      for (AvoidanceZone zone : list) {
+        ObjectNode node = zones.addObject();
+        node.put("name", zone.name());
+        node.put("min_x", zone.minX());
+        node.put("min_y", zone.minY());
+        node.put("max_x", zone.maxX());
+        node.put("max_y", zone.maxY());
+      }
     }
+    // Written via the instance table (not publishState) because this also runs from the
+    // constructor, before kInstance has been assigned.
+    m_stateTable.getEntry(AVOIDANCE_ZONES_KEY).setString(serialize(zones));
+  }
+
+  private String serialize(JsonNode node) {
     try {
-      // Written via the instance table (not publishState) because this also runs from the
-      // constructor, before kInstance has been assigned.
-      m_stateTable.getEntry(AVOIDANCE_ZONES_KEY).setString(m_mapper.writeValueAsString(zones));
+      return m_mapper.writeValueAsString(node);
     } catch (JsonProcessingException e) {
-      DriverStation.reportError(
-          "[LLM] failed to serialize avoidance zones: " + e.getMessage(), false);
+      DriverStation.reportError("[LLM] failed to serialize " + node + ": " + e, false);
+      return node.isArray() ? "[]" : "{}";
     }
   }
 
@@ -193,8 +248,7 @@ public final class LlmCommands {
     publishState("robot/enabled", DriverStation.isEnabled());
     publishState("robot/mode", currentMode());
 
-    if (m_cancelAllEntry.getBoolean(false)) {
-      m_cancelAllEntry.setBoolean(false);
+    if (m_cancelAllRequests.poll()) {
       CommandScheduler.getInstance().cancelAll();
       DriverStation.reportWarning("[LLM] cancelAll requested", false);
     }
@@ -265,11 +319,42 @@ public final class LlmCommands {
     return "teleop";
   }
 
+  /**
+   * A client-written request id. The client is the only publisher of the topic, so unlike a
+   * boolean the robot "resets", two writers never race on it and a request cannot be observed
+   * twice. {@link #poll} reports true exactly once per id that is larger than the last one seen;
+   * any other value (the first one after boot, or a smaller id from a restarted client) becomes
+   * the new baseline silently.
+   */
+  private static final class RequestCounter {
+    private final NetworkTableEntry m_entry;
+    private Long m_last; // null until the topic has been seen
+
+    RequestCounter(NetworkTableEntry entry) {
+      m_entry = entry;
+    }
+
+    boolean poll() {
+      if (!m_entry.exists()) {
+        return false;
+      }
+      long value = m_entry.getInteger(0);
+      boolean isNew = m_last != null && value > m_last;
+      m_last = value;
+      return isNew;
+    }
+
+    long last() {
+      return m_last == null ? 0 : m_last;
+    }
+  }
+
   /** Per-command NetworkTables plumbing and lifecycle tracking. */
   private final class Registration {
     private final LlmCommandSpec m_spec;
-    private final NetworkTableEntry m_runEntry;
-    private final NetworkTableEntry m_cancelEntry;
+    private final RequestCounter m_runRequests;
+    private final RequestCounter m_cancelRequests;
+    private final NetworkTableEntry m_runAckEntry;
     private final NetworkTableEntry m_statusEntry;
     private final NetworkTableEntry m_completedCountEntry;
     private final NetworkTableEntry m_lastResultEntry;
@@ -287,15 +372,15 @@ public final class LlmCommands {
     Registration(LlmCommandSpec spec) {
       m_spec = spec;
       NetworkTable table = m_commandsTable.getSubTable(spec.name());
-      m_runEntry = table.getEntry("run");
-      m_cancelEntry = table.getEntry("cancel");
+      m_runRequests = new RequestCounter(table.getEntry("runRequest"));
+      m_cancelRequests = new RequestCounter(table.getEntry("cancelRequest"));
+      m_runAckEntry = table.getEntry("runAck");
       m_statusEntry = table.getEntry("status");
       m_completedCountEntry = table.getEntry("completedCount");
       m_lastResultEntry = table.getEntry("lastResult");
       m_expectedEntry = table.getEntry("expected");
 
-      m_runEntry.setBoolean(false);
-      m_cancelEntry.setBoolean(false);
+      m_runAckEntry.setInteger(0);
       m_statusEntry.setString("idle");
       m_completedCountEntry.setInteger(0);
       m_lastResultEntry.setString("");
@@ -316,15 +401,14 @@ public final class LlmCommands {
     }
 
     void periodic() {
-      if (m_cancelEntry.getBoolean(false)) {
-        m_cancelEntry.setBoolean(false);
-        if (m_active != null) {
-          m_active.cancel();
-        }
+      if (m_cancelRequests.poll() && m_active != null) {
+        m_active.cancel();
       }
 
-      if (m_runEntry.getBoolean(false)) {
-        m_runEntry.setBoolean(false);
+      if (m_runRequests.poll()) {
+        // Acknowledge before running so a rejection (which completes at once) is still
+        // attributable to this request.
+        m_runAckEntry.setInteger(m_runRequests.last());
         handleRunRequest();
       }
 

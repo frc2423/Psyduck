@@ -38,7 +38,7 @@ class LlmCommandsTest {
   private static final NetworkTable kState = kTable.getSubTable("state");
 
   @BeforeAll
-  static void setUpAll() {
+  static void setUpAll() throws Exception {
     HAL.initialize(500, 0);
     SimHooks.pauseTiming();
     DriverStationSim.setDsAttached(true);
@@ -52,6 +52,36 @@ class LlmCommandsTest {
         .expected(p -> Map.of("arm/angle_degrees", 42.0))
         .command(() -> Commands.idle());
     LlmCommands.register("test_idle_no_stall").timeout(0.5).command(() -> Commands.idle());
+
+    // Like the Python client, publish a baseline request id for every command before sending
+    // any real request: the robot adopts the first id it sees without running anything.
+    tick(1);
+    for (JsonNode cmd : new ObjectMapper().readTree(kTable.getEntry("manifest").getString("")).get("commands")) {
+      NetworkTable table = kCommands.getSubTable(cmd.get("name").asText());
+      table.getEntry("runRequest").setInteger(0);
+      table.getEntry("cancelRequest").setInteger(0);
+    }
+    kTable.getEntry("cancelAllRequest").setInteger(0);
+    tick(1);
+  }
+
+  private static long sRequestId = 0;
+
+  /** Send a run request for {@code name} with a fresh id. */
+  private static long trigger(String name) {
+    long id = ++sRequestId;
+    kCommands.getSubTable(name).getEntry("runRequest").setInteger(id);
+    return id;
+  }
+
+  private static void cancel(String name) {
+    kCommands.getSubTable(name).getEntry("cancelRequest").setInteger(++sRequestId);
+  }
+
+  private static int boundaryZoneCount() {
+    return (int) LlmCommands.getAvoidanceZones().stream()
+        .filter(z -> z.name().startsWith("field_edge_"))
+        .count();
   }
 
   @AfterAll
@@ -93,7 +123,7 @@ class LlmCommandsTest {
   /** Trigger a command and tick until it reports completion or maxTicks elapse. */
   private static String runAndWait(String name, int maxTicks) {
     long before = completedCount(name);
-    kCommands.getSubTable(name).getEntry("run").setBoolean(true);
+    trigger(name);
     for (int i = 0; i < maxTicks && completedCount(name) == before; i++) {
       tick(1);
     }
@@ -105,7 +135,7 @@ class LlmCommandsTest {
   void manifestListsRegisteredCommands() throws Exception {
     String manifest = kTable.getEntry("manifest").getString("");
     JsonNode root = new ObjectMapper().readTree(manifest);
-    assertEquals(2, root.get("version").asInt());
+    assertEquals(3, root.get("version").asInt());
 
     JsonNode drive = null;
     for (JsonNode cmd : root.get("commands")) {
@@ -135,9 +165,10 @@ class LlmCommandsTest {
     double startX = kState.getEntry("drivetrain/x_meters").getDouble(0.0);
     double headingRad = Math.toRadians(kState.getEntry("drivetrain/heading_degrees").getDouble(0.0));
     kCommands.getSubTable("drive_distance").getSubTable("params").getEntry("meters").setDouble(1.0);
-    kCommands.getSubTable("drive_distance").getEntry("run").setBoolean(true);
+    long id = trigger("drive_distance");
     tick(2);
     assertEquals("running", status("drive_distance"));
+    assertEquals(id, kCommands.getSubTable("drive_distance").getEntry("runAck").getInteger(-1));
 
     JsonNode expected =
         new ObjectMapper()
@@ -145,10 +176,83 @@ class LlmCommandsTest {
     assertEquals(startX + Math.cos(headingRad), expected.get("drivetrain/x_meters").asDouble(), 1e-6);
     assertTrue(expected.has("drivetrain/heading_degrees"));
 
-    kCommands.getSubTable("drive_distance").getEntry("cancel").setBoolean(true);
+    cancel("drive_distance");
     tick(2);
     assertEquals("interrupted", status("drive_distance"));
     assertEquals("command was cancelled", lastResult("drive_distance"));
+  }
+
+  @Test
+  void requestIdIsHandledOnceAndStaleIdsAreIgnored() {
+    kCommands.getSubTable("say").getSubTable("params").getEntry("message").setString("once");
+    long before = completedCount("say");
+    long id = trigger("say");
+    // The same id stays published for many loops; it must not be consumed again.
+    tick(10);
+    assertEquals(before + 1, completedCount("say"));
+    assertEquals(id, kCommands.getSubTable("say").getEntry("runAck").getInteger(-1));
+
+    // A smaller id (a restarted client) becomes the new baseline without running anything.
+    kCommands.getSubTable("say").getEntry("runRequest").setInteger(1);
+    tick(5);
+    assertEquals(before + 1, completedCount("say"));
+    // ...and the next larger id runs again.
+    kCommands.getSubTable("say").getEntry("runRequest").setInteger(2);
+    tick(5);
+    assertEquals(before + 2, completedCount("say"));
+    sRequestId = Math.max(sRequestId, 2);
+  }
+
+  @Test
+  void driveToPointTurnsThenDrivesToTarget() {
+    double x = kState.getEntry("drivetrain/x_meters").getDouble(0.0);
+    double y = kState.getEntry("drivetrain/y_meters").getDouble(0.0);
+    // A target off to the side so the robot has to turn first.
+    double tx = x + 1.0;
+    double ty = y + 0.8;
+    NetworkTable params = kCommands.getSubTable("drive_to_point").getSubTable("params");
+    params.getEntry("x").setDouble(tx);
+    params.getEntry("y").setDouble(ty);
+    assertEquals("finished", runAndWait("drive_to_point", 1000), lastResult("drive_to_point"));
+    assertEquals(tx, kState.getEntry("drivetrain/x_meters").getDouble(0.0), 0.05);
+    assertEquals(ty, kState.getEntry("drivetrain/y_meters").getDouble(0.0), 0.05);
+    double expectedHeading = Math.toDegrees(Math.atan2(0.8, 1.0));
+    assertEquals(expectedHeading, kState.getEntry("drivetrain/heading_degrees").getDouble(0.0), 2.0);
+
+    // Face +x again so later straight-drive tests keep heading down the field.
+    kCommands.getSubTable("turn_to_heading").getSubTable("params").getEntry("degrees").setDouble(0.0);
+    assertEquals("finished", runAndWait("turn_to_heading", 500));
+  }
+
+  @Test
+  void driveToPointRejectedWhenLegCrossesZone() {
+    double x = kState.getEntry("drivetrain/x_meters").getDouble(0.0);
+    double y = kState.getEntry("drivetrain/y_meters").getDouble(0.0);
+    LlmCommands.addAvoidanceZone("block", x + 0.8, y - 0.5, x + 1.2, y + 0.5);
+    NetworkTable params = kCommands.getSubTable("drive_to_point").getSubTable("params");
+    params.getEntry("x").setDouble(x + 2.0);
+    params.getEntry("y").setDouble(y);
+    assertEquals("rejected", runAndWait("drive_to_point", 5));
+    assertTrue(lastResult("drive_to_point").contains("block"), lastResult("drive_to_point"));
+  }
+
+  @Test
+  void fieldBoundsArePublishedAndFenceTheField() throws Exception {
+    JsonNode bounds =
+        new ObjectMapper().readTree(kState.getEntry("field_bounds").getString(""));
+    assertEquals(0.5, bounds.get("min_x").asDouble(), 1e-9);
+    assertEquals(0.5, bounds.get("min_y").asDouble(), 1e-9);
+    assertTrue(bounds.get("max_x").asDouble() > 10.0, bounds.toString());
+    assertTrue(bounds.get("max_y").asDouble() > 5.0, bounds.toString());
+    assertEquals(4, boundaryZoneCount());
+
+    // Backing straight out of the field (heading ~0, x < 10) crosses field_edge_min_x.
+    double x = kState.getEntry("drivetrain/x_meters").getDouble(0.0);
+    assertTrue(x < 10.0, "robot at x=" + x);
+    kCommands.getSubTable("drive_distance").getSubTable("params").getEntry("meters").setDouble(-10.0);
+    assertEquals("rejected", runAndWait("drive_distance", 5));
+    assertTrue(lastResult("drive_distance").contains("field_edge_min_x"), lastResult("drive_distance"));
+    assertEquals(x, kState.getEntry("drivetrain/x_meters").getDouble(99.0), 1e-6);
   }
 
   @Test
@@ -159,7 +263,7 @@ class LlmCommandsTest {
 
     kCommands.getSubTable("drive_distance").getSubTable("params").getEntry("meters").setDouble(3.0);
     long before = completedCount("drive_distance");
-    kCommands.getSubTable("drive_distance").getEntry("run").setBoolean(true);
+    trigger("drive_distance");
     tick(10);
     assertEquals("running", status("drive_distance"));
 
@@ -195,7 +299,7 @@ class LlmCommandsTest {
   @Test
   void disablingMidRunIsReported() {
     kCommands.getSubTable("drive_distance").getSubTable("params").getEntry("meters").setDouble(5.0);
-    kCommands.getSubTable("drive_distance").getEntry("run").setBoolean(true);
+    trigger("drive_distance");
     tick(5);
     assertEquals("running", status("drive_distance"));
     setEnabled(false);
@@ -233,11 +337,11 @@ class LlmCommandsTest {
   void cancelInterruptsRunningCommand() {
     kCommands.getSubTable("drive_distance").getSubTable("params").getEntry("meters").setDouble(8.0);
     long before = completedCount("drive_distance");
-    kCommands.getSubTable("drive_distance").getEntry("run").setBoolean(true);
+    trigger("drive_distance");
     tick(10);
     assertEquals("running", status("drive_distance"));
 
-    kCommands.getSubTable("drive_distance").getEntry("cancel").setBoolean(true);
+    cancel("drive_distance");
     tick(2);
     assertEquals(before + 1, completedCount("drive_distance"));
     assertEquals("interrupted", status("drive_distance"));
@@ -260,38 +364,46 @@ class LlmCommandsTest {
 
   @Test
   void avoidanceZoneIsPublishedToState() throws Exception {
-    assertEquals("[]", kState.getEntry("avoidance_zones").getString("?"));
+    ObjectMapper mapper = new ObjectMapper();
+    int boundary = boundaryZoneCount();
+    JsonNode zones = mapper.readTree(kState.getEntry("avoidance_zones").getString(""));
+    assertEquals(boundary, zones.size());
+    assertEquals("field_edge_min_x", zones.get(0).get("name").asText());
 
-    // Corners given top-left / bottom-right; the published zone is normalised to min/max.
+    // Corners given in any order; the published zone is normalised to min/max.
     LlmCommands.addAvoidanceZone("pit", 1.0, 3.0, 2.0, 2.0);
-    JsonNode zones = new ObjectMapper().readTree(kState.getEntry("avoidance_zones").getString(""));
-    assertEquals(1, zones.size());
-    assertEquals("pit", zones.get(0).get("name").asText());
-    assertEquals(1.0, zones.get(0).get("min_x").asDouble());
-    assertEquals(2.0, zones.get(0).get("min_y").asDouble());
-    assertEquals(2.0, zones.get(0).get("max_x").asDouble());
-    assertEquals(3.0, zones.get(0).get("max_y").asDouble());
+    zones = mapper.readTree(kState.getEntry("avoidance_zones").getString(""));
+    assertEquals(boundary + 1, zones.size());
+    JsonNode pit = zones.get(boundary);
+    assertEquals("pit", pit.get("name").asText());
+    assertEquals(1.0, pit.get("min_x").asDouble());
+    assertEquals(2.0, pit.get("min_y").asDouble());
+    assertEquals(2.0, pit.get("max_x").asDouble());
+    assertEquals(3.0, pit.get("max_y").asDouble());
 
+    // Clearing removes user zones but keeps the field fence.
     LlmCommands.clearAvoidanceZones();
-    assertEquals("[]", kState.getEntry("avoidance_zones").getString("?"));
+    zones = mapper.readTree(kState.getEntry("avoidance_zones").getString(""));
+    assertEquals(boundary, zones.size());
   }
 
   @Test
   void addAvoidanceZoneCommandUpdatesState() throws Exception {
     NetworkTable params = kCommands.getSubTable("add_avoidance_zone").getSubTable("params");
     params.getEntry("name").setString("charging_station");
-    params.getEntry("top_left_x").setDouble(4.0);
-    params.getEntry("top_left_y").setDouble(1.0);
-    params.getEntry("bottom_right_x").setDouble(5.0);
-    params.getEntry("bottom_right_y").setDouble(0.0);
+    params.getEntry("x1").setDouble(4.0);
+    params.getEntry("y1").setDouble(1.0);
+    params.getEntry("x2").setDouble(5.0);
+    params.getEntry("y2").setDouble(0.0);
+    int boundary = boundaryZoneCount();
     assertEquals("finished", runAndWait("add_avoidance_zone", 10));
 
     JsonNode zones = new ObjectMapper().readTree(kState.getEntry("avoidance_zones").getString(""));
-    assertEquals("charging_station", zones.get(0).get("name").asText());
-    assertEquals(1, LlmCommands.getAvoidanceZones().size());
+    assertEquals("charging_station", zones.get(boundary).get("name").asText());
+    assertEquals(boundary + 1, LlmCommands.getAvoidanceZones().size());
 
     assertEquals("finished", runAndWait("clear_avoidance_zones", 10));
-    assertTrue(LlmCommands.getAvoidanceZones().isEmpty());
+    assertEquals(boundary, LlmCommands.getAvoidanceZones().size());
   }
 
   @Test

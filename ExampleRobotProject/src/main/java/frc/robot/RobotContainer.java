@@ -4,8 +4,11 @@
 
 package frc.robot;
 
+import edu.wpi.first.apriltag.AprilTagFieldLayout;
+import edu.wpi.first.apriltag.AprilTagFields;
 import edu.wpi.first.math.MathUtil;
 import edu.wpi.first.math.geometry.Pose2d;
+import edu.wpi.first.math.geometry.Rotation2d;
 import edu.wpi.first.math.geometry.Translation2d;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.Commands;
@@ -25,14 +28,42 @@ public class RobotContainer {
   private static final double kMaxHeadingDriftDegrees = 10.0;
   /** How far the robot may translate while it is supposed to be turning in place. */
   private static final double kMaxTurnDriftMeters = 0.1;
+  /**
+   * Clearance between the robot centre (its published pose) and the field walls. The boundary
+   * zones start this far inside the walls, so a drive that would put a bumper into a wall is
+   * rejected like any other zone crossing.
+   */
+  private static final double kWallClearanceMeters = 0.5;
+  /** Used if the current season's field layout cannot be loaded. */
+  private static final double kFallbackFieldLengthMeters = 16.54;
+  private static final double kFallbackFieldWidthMeters = 8.07;
 
   private final Drivetrain m_drivetrain = new Drivetrain();
   private final Arm m_arm = new Arm();
   private final Intake m_intake = new Intake();
+  private final double m_fieldLength;
+  private final double m_fieldWidth;
 
   public RobotContainer() {
+    double[] field = loadFieldSize();
+    m_fieldLength = field[0];
+    m_fieldWidth = field[1];
+    // The simulated drivetrain starts at the origin, which is inside the wall clearance; put it
+    // on the field so the first drive is not rejected.
+    m_drivetrain.resetPose(new Pose2d(1.5, m_fieldWidth / 2.0, Rotation2d.kZero));
     configureBindings();
     configureLlmCommands();
+  }
+
+  /** Field length and width in meters from this season's AprilTag layout. */
+  private static double[] loadFieldSize() {
+    try {
+      AprilTagFieldLayout layout = AprilTagFieldLayout.loadField(AprilTagFields.kDefaultField);
+      return new double[] {layout.getFieldLength(), layout.getFieldWidth()};
+    } catch (RuntimeException e) {
+      System.err.println("[LLM] could not load the field layout, using fallback size: " + e);
+      return new double[] {kFallbackFieldLengthMeters, kFallbackFieldWidthMeters};
+    }
   }
 
   private void configureBindings() {}
@@ -47,9 +78,11 @@ public class RobotContainer {
     LlmCommands.register("drive_distance")
         .description(
             "Drive the robot in a straight line along its current heading. Positive distance"
-                + " drives forward, negative drives backward. Finishes when the distance is"
-                + " reached. Rejected if the straight-line path would cross an avoidance zone;"
-                + " check avoidance_zones in the robot state and route around them.")
+                + " drives forward, negative drives backward: driving d meters at heading h"
+                + " changes x by d*cos(h) and y by d*sin(h). Finishes when the distance is"
+                + " reached. Rejected if the straight-line path would cross an avoidance zone"
+                + " (including the field_edge_* zones); check avoidance_zones in the robot state"
+                + " and route around them. To reach a specific position prefer drive_to_point.")
         .doubleParam("meters", "Signed distance to travel in meters.", -10.0, 10.0)
         .timeout(20.0)
         .checkIn(5.0)
@@ -70,8 +103,9 @@ public class RobotContainer {
 
     LlmCommands.register("turn_to_heading")
         .description(
-            "Rotate the robot in place to an absolute field heading. 0 degrees is the direction"
-                + " the robot faced at startup; positive angles are counter-clockwise.")
+            "Rotate the robot in place to an absolute field heading. Field frame: 0 degrees"
+                + " faces +x (increasing x_meters), 90 faces +y (increasing y_meters), 180 or"
+                + " -180 faces -x, -90 faces -y; positive angles are counter-clockwise.")
         .doubleParam("degrees", "Target heading in degrees, -180 to 180.", -180.0, 180.0)
         .timeout(10.0)
         .track("drivetrain/heading_degrees", "drivetrain/x_meters", "drivetrain/y_meters")
@@ -97,6 +131,36 @@ public class RobotContainer {
                         m_drivetrain.turnToAngle(
                             m_drivetrain.getHeadingDegrees() + p.getDouble("degrees")),
                     Set.of(m_drivetrain)));
+
+    LlmCommands.register("drive_to_point")
+        .description(
+            "Turn in place to face a field position (x, y in meters), then drive straight to it."
+                + " This is the easiest way to reach a specific spot: give the coordinates, no"
+                + " heading arithmetic needed. Follow a route by calling it once per waypoint,"
+                + " e.g. the four corners of a path around an avoidance zone. Rejected if the"
+                + " straight line from the current position to the target crosses an avoidance"
+                + " zone, so pick waypoints whose connecting lines stay clear.")
+        .doubleParam(
+            "x", "Target x in field meters.", kWallClearanceMeters, m_fieldLength - kWallClearanceMeters)
+        .doubleParam(
+            "y", "Target y in field meters.", kWallClearanceMeters, m_fieldWidth - kWallClearanceMeters)
+        .timeout(30.0)
+        .checkIn(5.0)
+        .track(
+            "drivetrain/x_meters",
+            "drivetrain/y_meters",
+            "drivetrain/heading_degrees",
+            "drivetrain/speed_mps",
+            "drivetrain/moving")
+        .expected(p -> expectedPoseAtPoint(p.getDouble("x"), p.getDouble("y")))
+        .stallTimeout(1.0)
+        .watchdog(this::driveToPointWatchdog)
+        .command(
+            p -> {
+              Translation2d target = new Translation2d(p.getDouble("x"), p.getDouble("y"));
+              requireClearPath(m_drivetrain.getPose().getTranslation(), target);
+              return m_drivetrain.driveToPoint(target);
+            });
 
     LlmCommands.register("stop_driving")
         .description("Immediately stop all drivetrain motion.")
@@ -173,28 +237,35 @@ public class RobotContainer {
     LlmCommands.register("add_avoidance_zone")
         .description(
             "Define a rectangular area of the field, in field coordinates (meters), that the robot"
-                + " must not enter. Drive commands whose path would cross it are rejected. The"
-                + " current zones are listed under avoidance_zones in the robot state.")
+                + " must not enter, given by any two opposite corners. Drive commands whose path"
+                + " would cross it are rejected. The current zones are listed under"
+                + " avoidance_zones in the robot state.")
         .stringParam("name", "Short label for the zone, e.g. charging_station.")
-        .doubleParam("top_left_x", "X coordinate of the top-left corner in meters.")
-        .doubleParam("top_left_y", "Y coordinate of the top-left corner in meters.")
-        .doubleParam("bottom_right_x", "X coordinate of the bottom-right corner in meters.")
-        .doubleParam("bottom_right_y", "Y coordinate of the bottom-right corner in meters.")
+        .doubleParam("x1", "X coordinate of one corner in meters.")
+        .doubleParam("y1", "Y coordinate of that corner in meters.")
+        .doubleParam("x2", "X coordinate of the opposite corner in meters.")
+        .doubleParam("y2", "Y coordinate of the opposite corner in meters.")
         .command(
             p ->
                 Commands.runOnce(
                     () ->
                         LlmCommands.addAvoidanceZone(
                             p.getString("name"),
-                            p.getDouble("top_left_x"),
-                            p.getDouble("top_left_y"),
-                            p.getDouble("bottom_right_x"),
-                            p.getDouble("bottom_right_y"))));
+                            p.getDouble("x1"),
+                            p.getDouble("y1"),
+                            p.getDouble("x2"),
+                            p.getDouble("y2"))));
 
     LlmCommands.register("clear_avoidance_zones")
-        .description("Remove every avoidance zone.")
+        .description("Remove every avoidance zone except the field_edge_* boundary zones.")
         .command(() -> Commands.runOnce(LlmCommands::clearAvoidanceZones));
 
+    // Fence the field: everything outside the walls (less the robot's own clearance) is a zone.
+    LlmCommands.setFieldBounds(
+        kWallClearanceMeters,
+        kWallClearanceMeters,
+        m_fieldLength - kWallClearanceMeters,
+        m_fieldWidth - kWallClearanceMeters);
     LlmCommands.addAvoidanceZone("zone1", 4.039778, 6.753221, 5.200448, 1.327091);
   }
 
@@ -206,7 +277,11 @@ public class RobotContainer {
   private void requireClearStraightPath(double meters) {
     Pose2d pose = m_drivetrain.getPose();
     Translation2d start = pose.getTranslation();
-    Translation2d end = start.plus(new Translation2d(meters, pose.getRotation()));
+    requireClearPath(start, start.plus(new Translation2d(meters, pose.getRotation())));
+  }
+
+  /** Throws if the straight segment from {@code start} to {@code end} crosses an avoidance zone. */
+  private static void requireClearPath(Translation2d start, Translation2d end) {
     AvoidanceZone blocked = LlmCommands.findZoneCrossedBy(start, end);
     if (blocked != null) {
       throw new IllegalStateException(
@@ -224,6 +299,18 @@ public class RobotContainer {
         "drivetrain/x_meters", end.getX(),
         "drivetrain/y_meters", end.getY(),
         "drivetrain/heading_degrees", pose.getRotation().getDegrees());
+  }
+
+  /** Pose the robot should end at after {@code drive_to_point}: the target, facing along the leg. */
+  private Map<String, Object> expectedPoseAtPoint(double x, double y) {
+    Pose2d pose = m_drivetrain.getPose();
+    Translation2d delta = new Translation2d(x, y).minus(pose.getTranslation());
+    double heading =
+        delta.getNorm() < 1e-3 ? pose.getRotation().getDegrees() : delta.getAngle().getDegrees();
+    return Map.of(
+        "drivetrain/x_meters", x,
+        "drivetrain/y_meters", y,
+        "drivetrain/heading_degrees", heading);
   }
 
   private static Map<String, Object> expectedHeading(double degrees) {
@@ -261,6 +348,22 @@ public class RobotContainer {
       return String.format("heading drifted %.1f degrees during a straight drive", headingDrift);
     }
     return zoneWatchdog(pose.getTranslation());
+  }
+
+  /**
+   * {@code drive_to_point} first turns in place, then drives the straight leg. While it is still
+   * at the start only the zone check applies; once it moves it is held to the straight-drive
+   * rules.
+   */
+  private String driveToPointWatchdog(LlmRun run) {
+    Pose2d pose = m_drivetrain.getPose();
+    Translation2d start =
+        new Translation2d(
+            run.startDouble("drivetrain/x_meters"), run.startDouble("drivetrain/y_meters"));
+    if (pose.getTranslation().getDistance(start) < kMaxTurnDriftMeters) {
+      return zoneWatchdog(pose.getTranslation());
+    }
+    return straightDriveWatchdog(run);
   }
 
   /** Aborts an in-place turn if the robot translates, or if it somehow enters a zone. */

@@ -4,8 +4,12 @@ The robot publishes a JSON *manifest* under ``/LLM/manifest`` describing each co
 exposes. For every command there is a sub-table ``/LLM/commands/<name>`` containing:
 
 ``params/<param>``   written by us before triggering
-``run``              we set ``True``; the robot resets it once consumed
-``cancel``           we set ``True`` to cancel a running instance
+``runRequest``       request id we write to schedule a run. Only we publish it; the robot
+                     acts once per id larger than the last one it saw and adopts any other
+                     value (our baseline ``0``, or whatever it sees first after booting) as
+                     its new baseline without running anything
+``runAck``           the last request id the robot acted on
+``cancelRequest``    request id we write to cancel a running instance
 ``status``           ``idle`` | ``running`` | ``finished`` | ``interrupted`` | ``aborted`` |
                      ``rejected``
 ``completedCount``   incremented by the robot every time a run ends
@@ -37,6 +41,8 @@ SAMPLE_SECONDS = 0.1
 DEFAULT_CHECK_IN_SECONDS = 5.0
 # After the client cancels a command, how long to wait for the robot to acknowledge.
 CANCEL_ACK_SECONDS = 1.0
+# How long a run request may go without the robot echoing its id in ``runAck``.
+REQUEST_ACK_SECONDS = 1.0
 
 
 @dataclass(frozen=True)
@@ -119,7 +125,8 @@ class CommandResult:
 
     ``status`` is the robot's status once the run ended, or ``running`` when the check-in budget
     elapsed first, ``aborted`` when a client rule cancelled it, ``timeout`` when the client gave
-    up, ``disconnected`` when the NT connection dropped.
+    up, ``disconnected`` when the NT connection dropped, ``unacknowledged`` when the robot never
+    picked the request up.
     """
 
     name: str
@@ -165,7 +172,11 @@ class RobotClient:
         # subscribe to the whole prefix rather than individual entries.
         self._state_sub = ntcore.MultiSubscriber(self._inst, [f"/{TABLE_NAME}/state/"])
         self._manifest_entry = self._table.getEntry("manifest")
-        self._cancel_all_entry = self._table.getEntry("cancelAll")
+        self._cancel_all_entry = self._table.getEntry("cancelAllRequest")
+        # Request ids are time-based so a restarted client keeps counting upwards from where
+        # any earlier one left off; the robot treats a smaller id as a new baseline, not a run.
+        self._next_request_id = int(time.time() * 1000)
+        self._cancel_all_entry.setInteger(0)
         self.default_timeout = default_timeout
         self.check_in_seconds = DEFAULT_CHECK_IN_SECONDS
         self.rules: list[Rule] = list(DEFAULT_RULES)
@@ -208,7 +219,18 @@ class RobotClient:
                 "LlmCommands.getInstance().periodic()?"
             )
         self._manifest = Manifest.from_json(text)
+        # Publish a baseline id for every command now, well before the first real request, so
+        # the robot's "first value seen is the baseline" rule never swallows a real request.
+        for spec in self._manifest.commands:
+            table = self._commands_table.getSubTable(spec.name)
+            table.getEntry("runRequest").setInteger(0)
+            table.getEntry("cancelRequest").setInteger(0)
+        self._inst.flush()
         return self._manifest
+
+    def _request_id(self) -> int:
+        self._next_request_id += 1
+        return self._next_request_id
 
     # ------------------------------------------------------------------ commands
 
@@ -265,10 +287,11 @@ class RobotClient:
             started=time.monotonic(),
             deadline=time.monotonic() + timeout,
             rules=self._rules_for(spec),
+            request_id=self._request_id(),
         )
 
         self._inst.flush()
-        table.getEntry("run").setBoolean(True)
+        table.getEntry("runRequest").setInteger(run.request_id)
         self._inst.flush()
 
         if not wait:
@@ -307,6 +330,7 @@ class RobotClient:
         status_entry = table.getEntry("status")
         result_entry = table.getEntry("lastResult")
         expected_entry = table.getEntry("expected")
+        ack_entry = table.getEntry("runAck")
 
         if check_in is None:
             check_in = run.spec.check_in_seconds or self.check_in_seconds
@@ -323,7 +347,23 @@ class RobotClient:
                 message = result_entry.getString("")
                 if status == "aborted":
                     trace.add_violation(elapsed, "robot", message)
+                elif status == "running":
+                    # Our run ended and a newer request (from another client) started another
+                    # instance in the same robot loop; the one we were tracking is over.
+                    status = "interrupted"
+                    message = f"{message} (superseded by a newer run request)"
                 return self._finish(run, status, message)
+
+            if not run.acknowledged:
+                if ack_entry.getInteger(0) >= run.request_id:
+                    run.acknowledged = True
+                elif elapsed >= REQUEST_ACK_SECONDS:
+                    return self._finish(
+                        run,
+                        "unacknowledged",
+                        f"robot did not pick up the run request within {REQUEST_ACK_SECONDS:g}s;"
+                        f" robot status is {status_entry.getString('unknown')!r}",
+                    )
 
             if not self.connected:
                 return self._finish(run, "disconnected", "lost connection to robot")
@@ -403,11 +443,12 @@ class RobotClient:
         return CommandResult(run.spec.name, status, message, elapsed, trace)
 
     def cancel_command(self, name: str) -> None:
-        self._commands_table.getSubTable(name).getEntry("cancel").setBoolean(True)
+        entry = self._commands_table.getSubTable(name).getEntry("cancelRequest")
+        entry.setInteger(self._request_id())
         self._inst.flush()
 
     def cancel_all(self) -> None:
-        self._cancel_all_entry.setBoolean(True)
+        self._cancel_all_entry.setInteger(self._request_id())
         self._inst.flush()
 
     def get_status(self, name: str) -> str:
@@ -474,5 +515,7 @@ class _ActiveRun:
     started: float
     deadline: float
     rules: list[Rule]
+    request_id: int = 0
+    acknowledged: bool = False
     last_sample: float = 0.0
     expected_read: bool = False
