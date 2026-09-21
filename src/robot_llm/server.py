@@ -48,6 +48,8 @@ def _command_json(spec: CommandSpec) -> dict[str, Any]:
         "name": spec.name,
         "description": spec.description,
         "timeoutSeconds": spec.timeout_seconds,
+        "checkInSeconds": spec.check_in_seconds,
+        "trackedState": spec.tracked_state,
         "parameters": [asdict(p) for p in spec.parameters],
     }
 

@@ -11,7 +11,11 @@ LangChain, ntcore, and OpenAI models. The robot is controlled through tools that
    -> intake_game_piece()
    <- OK: intake_game_piece finished in 1.9s.
    -> drive_distance(meters=2.0)
-   <- OK: drive_distance finished in 3.1s.
+   <- FINISHED: drive_distance completed in 3.1s.
+      Expected vs actual: drivetrain/x_meters: expected 2.00, now 1.99; ...
+      Trace (8 of 31 samples; columns: t, drivetrain/x_meters, drivetrain/y_meters, ...):
+          0.0s | 0.00 | 0.00 | ...
+          ...
    -> score(level='high')
    <- OK: score finished in 4.2s.
  Picked up a game piece, drove 2 m forward and scored on the high level.
@@ -39,6 +43,18 @@ LangChain, ntcore, and OpenAI models. The robot is controlled through tools that
    The robot schedules the command, then reports `status` (`finished` / `interrupted` /
    `rejected`) and `lastResult`, which is returned to the model.
 4. Subsystems publish telemetry under `/LLM/state/*`; the model reads it via `get_robot_state`.
+5. **While a command runs it is monitored on both sides.** The robot evaluates the command's
+   optional stall check and `watchdog` every loop and aborts the run itself if they fire. The
+   client samples the command's `trackedState` keys every 100 ms into a *trace*, evaluates its
+   own rules (robot disabled, inside an avoidance zone, off the straight line to the expected
+   pose) and cancels on a violation. When the run ends the final state is compared with the
+   `expected` values the robot published. The tool result the model sees contains the status,
+   any violations, discrepancies, expected-vs-actual, and a downsampled trace — so it can tell
+   "ended in the right place" from "ended in the right place the wrong way".
+6. **Long commands check in.** A command tool blocks for at most a check-in budget (5 s by
+   default, `checkIn(...)` per command). If the command is still running it returns `RUNNING`
+   with the trace so far; the model then calls `wait_for_command` to keep going or
+   `cancel_command` to stop it and replan.
 
 ### NetworkTables protocol (`/LLM`)
 
@@ -48,9 +64,10 @@ LangChain, ntcore, and OpenAI models. The robot is controlled through tools that
 | `commands/<name>/params/<p>` | client | parameter values for the next run |
 | `commands/<name>/run` | client → robot resets | set `true` to schedule |
 | `commands/<name>/cancel` | client → robot resets | set `true` to cancel a running instance |
-| `commands/<name>/status` | robot | `idle`, `running`, `finished`, `interrupted`, `rejected` |
+| `commands/<name>/status` | robot | `idle`, `running`, `finished`, `interrupted`, `aborted` (stall check / watchdog), `rejected` |
 | `commands/<name>/completedCount` | robot | increments each time a run ends |
-| `commands/<name>/lastResult` | robot | human-readable outcome |
+| `commands/<name>/lastResult` | robot | human-readable outcome (for `aborted`, the watchdog's reason) |
+| `commands/<name>/expected` | robot | JSON object of the end values the current run should reach |
 | `cancelAll` | client → robot resets | cancel everything |
 | `state/<key>` | robot | telemetry (`drivetrain/x_meters`, `arm/angle_degrees`, `robot/enabled`, ...) |
 
@@ -58,8 +75,10 @@ LangChain, ntcore, and OpenAI models. The robot is controlled through tools that
 
 ```
 src/robot_llm/
-  nt_client.py   RobotClient: NT connection, manifest, run_command, get_state
-  tools.py       manifest -> LangChain StructuredTools (+ get_robot_state, cancel_all_commands, wait_seconds)
+  nt_client.py   RobotClient: NT connection, manifest, run_command (records a trace, check-ins), get_state
+  monitor.py     CommandTrace, client-side rules, expected-vs-actual comparison, tool-result formatting
+  tools.py       manifest -> LangChain StructuredTools (+ get_robot_state, wait_for_command, cancel_command,
+                 get_command_trace, cancel_all_commands, wait_seconds)
   agent.py       create_agent() wiring, system prompt, console rendering
   cli.py         interactive REPL / one-shot runner  (entry point: `robot-llm`)
   server.py      FastAPI WebSocket bridge for the web frontend  (entry point: `robot-llm-server`)
@@ -67,12 +86,15 @@ robot-llm-frontend/
   src/           Vite + React + MUI + zustand web UI: chat, running command, robot state, command list
 ExampleRobotProject/src/main/java/frc/robot/
   llm/LlmCommands.java         registry + NT protocol; call periodic() from robotPeriodic()
-  llm/LlmCommandBuilder.java   fluent registration API
+  llm/LlmCommandBuilder.java   fluent registration API (params, timeout, track/expected/stallTimeout/watchdog)
+  llm/LlmRun.java              per-run context handed to a watchdog (params, expected, start state, elapsed)
+  llm/LlmWatchdog.java         robot-side health check interface
   llm/LlmParams.java           typed access to the parameters the client sent
   llm/ParamSpec.java           parameter description published in the manifest
   subsystems/                  simulated Drivetrain, Arm and Intake (no hardware needed)
   RobotContainer.java          example command registrations
 ExampleRobotProject/src/test/java/frc/robot/llm/LlmCommandsTest.java   protocol tests under HAL sim
+tests/           Python tests: monitor rules/formatting, and RobotClient against an in-process NT server
 ```
 
 ### Example commands exposed by the robot
@@ -104,6 +126,34 @@ The factory must return a **new** `Command` each call (the registry wraps every 
 composition). Parameter types: `doubleParam`, `integerParam`, `booleanParam`, `stringParam`,
 `choiceParam`. Publish telemetry with `LlmCommands.publishState("arm/angle_degrees", angle)`.
 Descriptions are shown verbatim to the model, so be explicit about units and sign conventions.
+
+#### Monitoring a command
+
+All of these are optional; commands without them still work, the model just gets less evidence.
+
+```java
+LlmCommands.register("drive_distance")
+    ...
+    .checkIn(5.0)                       // hand the trace back to the model every 5 s while running
+    .track("drivetrain/x_meters", "drivetrain/y_meters", "drivetrain/heading_degrees")
+    .expected(p -> Map.of(              // end values, published under commands/<name>/expected
+        "drivetrain/x_meters", targetX(p), "drivetrain/y_meters", targetY(p)))
+    .stallTimeout(1.0)                  // abort if no tracked value changes for 1 s
+    .watchdog(run -> {                  // evaluated every loop; return a reason to abort
+        double off = crossTrackError(run.startDouble("drivetrain/x_meters"), ...);
+        return off > 0.15 ? String.format("%.2f m off the line", off) : null;
+    })
+    .command(p -> m_drivetrain.driveDistance(p.getDouble("meters")));
+```
+
+- `track` names the state keys that describe this command's progress. The client records them
+  while the command runs; the robot uses them for the stall check.
+- `expected` runs when the request is received (so it can read the current pose). Values are
+  compared with the final state on the client using per-key tolerances (`_meters` 0.1,
+  `_degrees` 3, heading wrap-aware).
+- `watchdog` gets an `LlmRun` with the params, expected values, the tracked state at start and
+  live access to `/LLM/state`. Returning a string cancels the command and reports it as
+  `aborted` with that reason. See `RobotContainer` for straight-line and turn-in-place examples.
 
 ## Installation
 
@@ -154,11 +204,15 @@ sends `chat {text}`, `cancel_all` and `cancel {name}`. See `src/robot_llm/server
 ## Tests
 
 ```sh
-cd ExampleRobotProject && ./gradlew test
+cd ExampleRobotProject && ./gradlew test    # Java
+uv run pytest                               # Python
 ```
 
 The Java tests run the robot code under HAL simulation and drive it through the NetworkTables
-protocol (manifest contents, rejection while disabled, completion, cancellation, sequences).
+protocol (manifest contents, rejection while disabled, completion, cancellation, sequences,
+expected values, watchdog and stall aborts, timeout reporting). The Python tests cover the
+monitor rules and result formatting, and run `RobotClient` against an in-process NetworkTables
+server that plays a small fake robot (traces, discrepancies, client-side aborts, check-ins).
 
 ## Links
 

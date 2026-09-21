@@ -17,7 +17,9 @@ import edu.wpi.first.networktables.NetworkTableInstance;
 import edu.wpi.first.wpilibj.simulation.DriverStationSim;
 import edu.wpi.first.wpilibj.simulation.SimHooks;
 import edu.wpi.first.wpilibj2.command.CommandScheduler;
+import edu.wpi.first.wpilibj2.command.Commands;
 import frc.robot.RobotContainer;
+import java.util.Map;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -42,6 +44,14 @@ class LlmCommandsTest {
     DriverStationSim.setDsAttached(true);
     // RobotContainer registers the example commands with the LlmCommands singleton.
     new RobotContainer();
+    // A command that never makes progress, to exercise the stall check and timeout reporting.
+    LlmCommands.register("test_idle")
+        .timeout(3.0)
+        .track("arm/angle_degrees")
+        .stallTimeout(0.5)
+        .expected(p -> Map.of("arm/angle_degrees", 42.0))
+        .command(() -> Commands.idle());
+    LlmCommands.register("test_idle_no_stall").timeout(0.5).command(() -> Commands.idle());
   }
 
   @AfterAll
@@ -95,7 +105,7 @@ class LlmCommandsTest {
   void manifestListsRegisteredCommands() throws Exception {
     String manifest = kTable.getEntry("manifest").getString("");
     JsonNode root = new ObjectMapper().readTree(manifest);
-    assertEquals(1, root.get("version").asInt());
+    assertEquals(2, root.get("version").asInt());
 
     JsonNode drive = null;
     for (JsonNode cmd : root.get("commands")) {
@@ -109,6 +119,89 @@ class LlmCommandsTest {
     assertEquals("double", meters.get("type").asText());
     assertEquals(-10.0, meters.get("min").asDouble());
     assertEquals(10.0, meters.get("max").asDouble());
+
+    assertEquals(5.0, drive.get("checkInSeconds").asDouble());
+    assertEquals(1.0, drive.get("stallTimeoutSeconds").asDouble());
+    assertTrue(drive.get("hasWatchdog").asBoolean());
+    assertEquals("drivetrain/x_meters", drive.get("trackedState").get(0).asText());
+  }
+
+  private static String lastResult(String name) {
+    return kCommands.getSubTable(name).getEntry("lastResult").getString("");
+  }
+
+  @Test
+  void expectedValuesArePublishedWhenRunStarts() throws Exception {
+    double startX = kState.getEntry("drivetrain/x_meters").getDouble(0.0);
+    double headingRad = Math.toRadians(kState.getEntry("drivetrain/heading_degrees").getDouble(0.0));
+    kCommands.getSubTable("drive_distance").getSubTable("params").getEntry("meters").setDouble(1.0);
+    kCommands.getSubTable("drive_distance").getEntry("run").setBoolean(true);
+    tick(2);
+    assertEquals("running", status("drive_distance"));
+
+    JsonNode expected =
+        new ObjectMapper()
+            .readTree(kCommands.getSubTable("drive_distance").getEntry("expected").getString(""));
+    assertEquals(startX + Math.cos(headingRad), expected.get("drivetrain/x_meters").asDouble(), 1e-6);
+    assertTrue(expected.has("drivetrain/heading_degrees"));
+
+    kCommands.getSubTable("drive_distance").getEntry("cancel").setBoolean(true);
+    tick(2);
+    assertEquals("interrupted", status("drive_distance"));
+    assertEquals("command was cancelled", lastResult("drive_distance"));
+  }
+
+  @Test
+  void watchdogAbortsDriveThatEntersZoneAddedMidRun() {
+    double x = kState.getEntry("drivetrain/x_meters").getDouble(0.0);
+    double y = kState.getEntry("drivetrain/y_meters").getDouble(0.0);
+    double headingRad = Math.toRadians(kState.getEntry("drivetrain/heading_degrees").getDouble(0.0));
+
+    kCommands.getSubTable("drive_distance").getSubTable("params").getEntry("meters").setDouble(3.0);
+    long before = completedCount("drive_distance");
+    kCommands.getSubTable("drive_distance").getEntry("run").setBoolean(true);
+    tick(10);
+    assertEquals("running", status("drive_distance"));
+
+    // Drop a zone 1 m ahead, in the path of the drive that is already under way.
+    double cx = x + 1.0 * Math.cos(headingRad);
+    double cy = y + 1.0 * Math.sin(headingRad);
+    LlmCommands.addAvoidanceZone("surprise", cx - 0.3, cy + 0.3, cx + 0.3, cy - 0.3);
+
+    for (int i = 0; i < 300 && completedCount("drive_distance") == before; i++) {
+      tick(1);
+    }
+    assertEquals("aborted", status("drive_distance"));
+    assertTrue(lastResult("drive_distance").contains("surprise"), lastResult("drive_distance"));
+    // Aborted well before the 3 m target.
+    double travelled = kState.getEntry("drivetrain/x_meters").getDouble(0.0) - x;
+    assertTrue(Math.abs(travelled) < 1.5, "travelled " + travelled);
+  }
+
+  @Test
+  void stallCheckAbortsCommandThatMakesNoProgress() {
+    assertEquals("aborted", runAndWait("test_idle", 100));
+    assertTrue(lastResult("test_idle").startsWith("no progress on"), lastResult("test_idle"));
+    assertTrue(
+        kCommands.getSubTable("test_idle").getEntry("expected").getString("").contains("42"));
+  }
+
+  @Test
+  void timeoutIsReportedAsSuch() {
+    assertEquals("interrupted", runAndWait("test_idle_no_stall", 100));
+    assertTrue(lastResult("test_idle_no_stall").startsWith("timed out"), lastResult("test_idle_no_stall"));
+  }
+
+  @Test
+  void disablingMidRunIsReported() {
+    kCommands.getSubTable("drive_distance").getSubTable("params").getEntry("meters").setDouble(5.0);
+    kCommands.getSubTable("drive_distance").getEntry("run").setBoolean(true);
+    tick(5);
+    assertEquals("running", status("drive_distance"));
+    setEnabled(false);
+    tick(2);
+    assertEquals("interrupted", status("drive_distance"));
+    assertTrue(lastResult("drive_distance").contains("disabled"), lastResult("drive_distance"));
   }
 
   @Test

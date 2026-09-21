@@ -9,7 +9,8 @@ from typing import Any, Literal
 from langchain_core.tools import BaseTool, StructuredTool, tool
 from pydantic import BaseModel, Field, create_model
 
-from robot_llm.nt_client import CommandSpec, ParamSpec, RobotClient
+from robot_llm.monitor import format_result
+from robot_llm.nt_client import CommandResult, CommandSpec, ParamSpec, RobotClient
 
 _PY_TYPES: dict[str, type] = {
     "double": float,
@@ -44,18 +45,39 @@ def _pascal(snake: str) -> str:
     return "".join(part.capitalize() for part in snake.split("_"))
 
 
+def describe_result(result: CommandResult) -> str:
+    """Text returned to the model for a command run (or a check-in on one)."""
+    if result.trace is not None:
+        return format_result(result.trace)
+    if result.ok:
+        return f"FINISHED: {result.name} completed in {result.elapsed_seconds:.1f}s."
+    return f"{result.status.upper()}: {result.name} did not complete. {result.message}"
+
+
 def command_tool(client: RobotClient, spec: CommandSpec) -> BaseTool:
-    """Create a tool that triggers ``spec`` on the robot and waits for it to finish."""
+    """Create a tool that triggers ``spec`` on the robot and waits for it to finish.
+
+    The tool blocks until the command ends or the check-in budget elapses, then returns the
+    outcome together with a trace of the tracked telemetry, any rule violations, and how the
+    final state compares to what the command was expected to achieve.
+    """
 
     def _run(**kwargs: Any) -> str:
-        result = client.run_command(spec.name, kwargs)
-        if result.ok:
-            return f"OK: {spec.name} finished in {result.elapsed_seconds:.1f}s."
-        return f"{result.status.upper()}: {spec.name} did not complete. {result.message}"
+        return describe_result(client.run_command(spec.name, kwargs))
 
     description = spec.description or f"Run the robot command '{spec.name}'."
     if spec.timeout_seconds > 0:
         description += f" Times out after {spec.timeout_seconds:g}s."
+    if spec.tracked_state:
+        description += (
+            " Returns a trace of " + ", ".join(spec.tracked_state) + " recorded while it ran."
+        )
+    check_in = spec.check_in_seconds or client.check_in_seconds
+    if spec.timeout_seconds == 0 or spec.timeout_seconds > check_in:
+        description += (
+            f" If still running after {check_in:g}s it returns RUNNING with the trace so far;"
+            " use wait_for_command to continue."
+        )
 
     return StructuredTool.from_function(
         func=_run,
@@ -85,13 +107,46 @@ def builtin_tools(client: RobotClient) -> list[BaseTool]:
         return "Cancel request sent."
 
     @tool
+    def wait_for_command(name: str) -> str:
+        """Keep waiting on a command tool that returned RUNNING. Blocks for another check-in
+        period and returns the updated trace, or the final outcome once the command ends."""
+        return describe_result(client.wait_for_command(name))
+
+    @tool
+    def cancel_command(name: str) -> str:
+        """Cancel one running command by name (e.g. after a RUNNING check-in shows it is not
+        doing what you intended). Returns the final trace."""
+        result = client.wait_for_command(name, check_in=0.0)
+        if result.status != "running":
+            return f"{name} is not running (status {result.status})."
+        client.cancel_command(name)
+        return describe_result(client.wait_for_command(name, check_in=2.0))
+
+    @tool
+    def get_command_trace(name: str) -> str:
+        """Full recorded trace of the current or most recent run of a command: expected values,
+        every sample of the tracked telemetry, violations and discrepancies. Use it to diagnose
+        a run whose summary looked wrong."""
+        trace = client.get_trace(name)
+        if trace is None:
+            return f"No trace recorded for {name!r} yet."
+        return json.dumps(trace.to_dict(max_points=60), indent=1)
+
+    @tool
     def wait_seconds(seconds: float) -> str:
         """Pause for a number of seconds (max 10) before continuing, e.g. to let motion settle."""
         seconds = max(0.0, min(float(seconds), 10.0))
         time.sleep(seconds)
         return f"Waited {seconds:g}s."
 
-    return [get_robot_state, cancel_all_commands, wait_seconds]
+    return [
+        get_robot_state,
+        cancel_all_commands,
+        wait_for_command,
+        cancel_command,
+        get_command_trace,
+        wait_seconds,
+    ]
 
 
 def build_tools(client: RobotClient) -> list[BaseTool]:

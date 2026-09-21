@@ -30,6 +30,11 @@ public class Arm extends SubsystemBase {
       this.degrees = degrees;
     }
 
+    /** Look up a preset by its lower-case name. Throws if the name is unknown. */
+    public static Preset parse(String name) {
+      return valueOf(name.trim().toUpperCase());
+    }
+
     public static String[] names() {
       Preset[] values = values();
       String[] names = new String[values.length];
@@ -64,7 +69,7 @@ public class Arm extends SubsystemBase {
 
   /** Move to a named preset. Throws if the name is unknown so the LLM gets a clear error. */
   public Command goToPreset(String name) {
-    Preset preset = Preset.valueOf(name.trim().toUpperCase());
+    Preset preset = Preset.parse(name);
     return goToAngle(preset.degrees).withName("ArmToPreset(" + preset.name() + ")");
   }
 

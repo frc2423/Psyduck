@@ -14,6 +14,7 @@ import edu.wpi.first.networktables.NetworkTableEntry;
 import edu.wpi.first.networktables.NetworkTableInstance;
 import edu.wpi.first.networktables.NetworkTableValue;
 import edu.wpi.first.wpilibj.DriverStation;
+import edu.wpi.first.wpilibj.Timer;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.CommandScheduler;
 import frc.robot.llm.LlmCommandBuilder.LlmCommandSpec;
@@ -37,11 +38,14 @@ import java.util.Map;
  *       false once the request has been consumed.
  *   <li>{@code commands/<name>/cancel} (boolean) – client sets true to cancel a running instance.
  *   <li>{@code commands/<name>/status} (string) – {@code idle}, {@code running}, {@code
- *       finished}, {@code interrupted} or {@code rejected}.
+ *       finished}, {@code interrupted}, {@code aborted} (the robot-side stall check or watchdog
+ *       cancelled it) or {@code rejected}.
  *   <li>{@code commands/<name>/completedCount} (integer) – incremented every time a run ends.
  *       The client compares this against the value before triggering to detect completion
  *       without racing on {@code status}.
  *   <li>{@code commands/<name>/lastResult} (string) – human-readable outcome of the last run.
+ *   <li>{@code commands/<name>/expected} (string) – JSON object of the end values the current
+ *       (or last) run was expected to reach, keyed by state key. Empty object if none declared.
  *   <li>{@code cancelAll} (boolean) – client sets true to cancel every scheduled command.
  *   <li>{@code state/<key>} – telemetry published by subsystems via {@link #publishState}.
  *   <li>{@code state/avoidance_zones} (string) – JSON array of rectangles the robot must not
@@ -53,7 +57,9 @@ import java.util.Map;
  */
 public final class LlmCommands {
   private static final String TABLE_NAME = "LLM";
-  private static final int MANIFEST_VERSION = 1;
+  private static final int MANIFEST_VERSION = 2;
+  /** Change in a tracked numeric value that counts as progress for the stall check. */
+  private static final double STALL_EPSILON = 1e-3;
   private static final String AVOIDANCE_ZONES_KEY = "avoidance_zones";
 
   private static final LlmCommands kInstance = new LlmCommands();
@@ -217,6 +223,11 @@ public final class LlmCommands {
       cmd.put("name", spec.name());
       cmd.put("description", spec.description());
       cmd.put("timeoutSeconds", spec.timeoutSeconds());
+      cmd.put("checkInSeconds", spec.checkInSeconds());
+      cmd.put("stallTimeoutSeconds", spec.stallTimeoutSeconds());
+      cmd.put("hasWatchdog", spec.watchdog() != null);
+      ArrayNode tracked = cmd.putArray("trackedState");
+      spec.trackedState().forEach(tracked::add);
       ArrayNode params = cmd.putArray("parameters");
       for (ParamSpec p : spec.params()) {
         ObjectNode pn = params.addObject();
@@ -262,9 +273,15 @@ public final class LlmCommands {
     private final NetworkTableEntry m_statusEntry;
     private final NetworkTableEntry m_completedCountEntry;
     private final NetworkTableEntry m_lastResultEntry;
+    private final NetworkTableEntry m_expectedEntry;
     private final Map<String, NetworkTableEntry> m_paramEntries = new HashMap<>();
 
     private Command m_active;
+    private LlmRun m_run;
+    private String m_abortReason;
+    private boolean m_timedOut;
+    private double m_lastProgressTime;
+    private Map<String, Object> m_lastProgressValues;
     private long m_completedCount;
 
     Registration(LlmCommandSpec spec) {
@@ -275,12 +292,14 @@ public final class LlmCommands {
       m_statusEntry = table.getEntry("status");
       m_completedCountEntry = table.getEntry("completedCount");
       m_lastResultEntry = table.getEntry("lastResult");
+      m_expectedEntry = table.getEntry("expected");
 
       m_runEntry.setBoolean(false);
       m_cancelEntry.setBoolean(false);
       m_statusEntry.setString("idle");
       m_completedCountEntry.setInteger(0);
       m_lastResultEntry.setString("");
+      m_expectedEntry.setString("{}");
 
       NetworkTable params = table.getSubTable("params");
       for (ParamSpec p : spec.params()) {
@@ -308,6 +327,75 @@ public final class LlmCommands {
         m_runEntry.setBoolean(false);
         handleRunRequest();
       }
+
+      if (m_active != null) {
+        monitor();
+      }
+    }
+
+    /**
+     * Robot-side health checks, run once per loop while the command is active. Aborting cancels
+     * the command synchronously, so {@link #finish} has already run when this returns.
+     */
+    private void monitor() {
+      if (m_spec.timeoutSeconds() > 0 && m_run.elapsedSeconds() >= m_spec.timeoutSeconds()) {
+        m_timedOut = true;
+        m_active.cancel();
+        return;
+      }
+      String reason = checkStall();
+      if (reason == null && m_spec.watchdog() != null) {
+        try {
+          reason = m_spec.watchdog().check(m_run);
+        } catch (RuntimeException e) {
+          reason = "watchdog threw: " + e.getMessage();
+        }
+      }
+      if (reason != null) {
+        m_abortReason = reason;
+        DriverStation.reportWarning("[LLM] aborting " + m_spec.name() + ": " + reason, false);
+        m_active.cancel();
+      }
+    }
+
+    /** Returns a reason if no tracked numeric key has moved for the configured stall timeout. */
+    private String checkStall() {
+      if (m_spec.stallTimeoutSeconds() <= 0 || m_spec.trackedState().isEmpty()) {
+        return null;
+      }
+      Map<String, Object> now = snapshotTrackedState();
+      boolean progressed = false;
+      for (String key : m_spec.trackedState()) {
+        Object before = m_lastProgressValues.get(key);
+        Object after = now.get(key);
+        if (before instanceof Number b && after instanceof Number a) {
+          if (Math.abs(a.doubleValue() - b.doubleValue()) > STALL_EPSILON) {
+            progressed = true;
+          }
+        } else if (before != null && !before.equals(after)) {
+          progressed = true;
+        }
+      }
+      double t = Timer.getFPGATimestamp();
+      if (progressed) {
+        m_lastProgressTime = t;
+        m_lastProgressValues = now;
+        return null;
+      }
+      double stalled = t - m_lastProgressTime;
+      if (stalled < m_spec.stallTimeoutSeconds()) {
+        return null;
+      }
+      return String.format(
+          "no progress on %s for %.1fs (values %s)", m_spec.trackedState(), stalled, now);
+    }
+
+    private Map<String, Object> snapshotTrackedState() {
+      Map<String, Object> values = new LinkedHashMap<>();
+      for (String key : m_spec.trackedState()) {
+        values.put(key, m_stateTable.getEntry(key).getValue().getValue());
+      }
+      return values;
     }
 
     private void handleRunRequest() {
@@ -331,26 +419,58 @@ public final class LlmCommands {
         return;
       }
 
-      if (m_spec.timeoutSeconds() > 0) {
-        cmd = cmd.withTimeout(m_spec.timeoutSeconds());
+      Map<String, Object> expected;
+      try {
+        expected = new LinkedHashMap<>(m_spec.expected().apply(params));
+      } catch (RuntimeException e) {
+        finish("rejected", "expected-value function threw: " + e.getMessage());
+        return;
       }
+      m_expectedEntry.setString(toJson(expected));
 
+      // The timeout is enforced in monitor() rather than with withTimeout(): that wraps the
+      // command in a race group that *finishes* normally when the timer wins, which would make a
+      // timed-out run indistinguishable from a successful one.
       final Command scheduled =
           cmd.finallyDo(
                   interrupted -> {
                     m_active = null;
-                    if (interrupted) {
-                      finish("interrupted", "command was cancelled or timed out");
-                    } else {
+                    if (!interrupted) {
                       finish("finished", "command completed");
+                    } else if (m_abortReason != null) {
+                      finish("aborted", m_abortReason);
+                    } else if (m_timedOut) {
+                      finish(
+                          "interrupted",
+                          String.format("timed out after %.1fs", m_spec.timeoutSeconds()));
+                    } else if (DriverStation.isDisabled()) {
+                      finish("interrupted", "robot was disabled while the command was running");
+                    } else {
+                      finish("interrupted", "command was cancelled");
                     }
                   })
               .withName("LLM:" + m_spec.name());
+
+      Map<String, Object> startState = snapshotTrackedState();
+      m_run = new LlmRun(params, expected, startState, m_stateTable);
+      m_abortReason = null;
+      m_timedOut = false;
+      m_lastProgressTime = Timer.getFPGATimestamp();
+      m_lastProgressValues = startState;
 
       m_active = scheduled;
       m_statusEntry.setString("running");
       System.out.println("[LLM] run " + m_spec.name() + " " + params);
       CommandScheduler.getInstance().schedule(scheduled);
+    }
+
+    private String toJson(Map<String, Object> values) {
+      try {
+        return m_mapper.writeValueAsString(values);
+      } catch (JsonProcessingException e) {
+        DriverStation.reportError("[LLM] failed to serialize expected values: " + e, false);
+        return "{}";
+      }
     }
 
     private LlmParams readParams() {

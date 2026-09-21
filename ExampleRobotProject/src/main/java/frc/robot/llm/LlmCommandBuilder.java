@@ -7,6 +7,7 @@ package frc.robot.llm;
 import edu.wpi.first.wpilibj2.command.Command;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
@@ -18,15 +19,29 @@ import java.util.function.Supplier;
  *     .description("Drive straight for a distance in meters.")
  *     .doubleParam("meters", "Distance to drive; negative drives backwards", -5.0, 5.0)
  *     .timeout(15.0)
+ *     .track("drivetrain/x_meters", "drivetrain/y_meters")
+ *     .expected(p -> Map.of("drivetrain/x_meters", targetX(p)))
+ *     .stallTimeout(1.0)
+ *     .watchdog(run -> crossTrackError(run) > 0.2 ? "left the straight-line path" : null)
  *     .command(p -> drivetrain.driveDistance(p.getDouble("meters")));
  * }</pre>
+ *
+ * <p>The monitoring hooks ({@link #track}, {@link #expected}, {@link #stallTimeout}, {@link
+ * #watchdog}) are optional. Tracked keys tell the client which telemetry to record while the
+ * command runs; expected values and the watchdog let the robot itself judge whether a run is going
+ * to plan.
  */
 public final class LlmCommandBuilder {
   private final LlmCommands m_registry;
   private final String m_name;
   private String m_description = "";
   private double m_timeoutSeconds = 0.0;
+  private double m_checkInSeconds = 0.0;
+  private double m_stallTimeoutSeconds = 0.0;
   private final List<ParamSpec> m_params = new ArrayList<>();
+  private final List<String> m_trackedState = new ArrayList<>();
+  private Function<LlmParams, Map<String, Object>> m_expected = p -> Map.of();
+  private LlmWatchdog m_watchdog;
 
   LlmCommandBuilder(LlmCommands registry, String name) {
     m_registry = registry;
@@ -42,6 +57,51 @@ public final class LlmCommandBuilder {
   /** Maximum run time in seconds before the command is cancelled. 0 disables the timeout. */
   public LlmCommandBuilder timeout(double seconds) {
     m_timeoutSeconds = seconds;
+    return this;
+  }
+
+  /**
+   * How often (seconds) the client should pause waiting and hand the trace so far back to the
+   * model so it can decide to keep waiting or cancel. 0 uses the client's default.
+   */
+  public LlmCommandBuilder checkIn(double seconds) {
+    m_checkInSeconds = seconds;
+    return this;
+  }
+
+  /**
+   * State keys (under {@code /LLM/state}) that describe this command's progress. They are
+   * snapshotted when the run starts, sampled by the client while it runs, and used by {@link
+   * #stallTimeout} to detect a run that has stopped making progress.
+   */
+  public LlmCommandBuilder track(String... stateKeys) {
+    m_trackedState.addAll(List.of(stateKeys));
+    return this;
+  }
+
+  /**
+   * End values the command is expected to reach, keyed by state key. Evaluated when the run is
+   * scheduled and published under {@code commands/<name>/expected} so both the robot watchdog and
+   * the client can compare progress against them. Values may be numbers, booleans or strings.
+   * Throwing rejects the run.
+   */
+  public LlmCommandBuilder expected(Function<LlmParams, Map<String, Object>> expected) {
+    m_expected = expected;
+    return this;
+  }
+
+  /**
+   * Abort the run if none of the tracked numeric state keys changes for this many seconds. 0
+   * disables the check. Only use on commands that are expected to move something continuously.
+   */
+  public LlmCommandBuilder stallTimeout(double seconds) {
+    m_stallTimeoutSeconds = seconds;
+    return this;
+  }
+
+  /** Robot-side health check evaluated every loop while the command runs. */
+  public LlmCommandBuilder watchdog(LlmWatchdog watchdog) {
+    m_watchdog = watchdog;
     return this;
   }
 
@@ -81,7 +141,18 @@ public final class LlmCommandBuilder {
 
   /** Finish registration with a factory that builds the command from the supplied parameters. */
   public void command(Function<LlmParams, Command> factory) {
-    m_registry.add(new LlmCommandSpec(m_name, m_description, m_timeoutSeconds, m_params, factory));
+    m_registry.add(
+        new LlmCommandSpec(
+            m_name,
+            m_description,
+            m_timeoutSeconds,
+            m_checkInSeconds,
+            m_stallTimeoutSeconds,
+            m_params,
+            List.copyOf(m_trackedState),
+            m_expected,
+            m_watchdog,
+            factory));
   }
 
   /**
@@ -98,6 +169,11 @@ public final class LlmCommandBuilder {
       String name,
       String description,
       double timeoutSeconds,
+      double checkInSeconds,
+      double stallTimeoutSeconds,
       List<ParamSpec> params,
+      List<String> trackedState,
+      Function<LlmParams, Map<String, Object>> expected,
+      LlmWatchdog watchdog,
       Function<LlmParams, Command> factory) {}
 }
